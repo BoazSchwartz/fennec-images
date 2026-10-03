@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Album Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #1b1d22; --panel: #24272e; --panel2: #2d3139; --text: #e8e9ec; --muted: #9aa0ab;
+    --accent: #f0b35b; --accent2: #5bb7f0; --danger: #e06c6c; --page: #ffffff; --line: #3a3f49;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 14px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header input { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 14px; }
+  header .spacer { flex: 1; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #1b1d22; border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--danger); }
+  button.active { outline: 2px solid var(--accent2); }
+  button:disabled { opacity: .4; cursor: default; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+  #stage { display: flex; flex-direction: column; min-width: 0; }
+  #viewport { flex: 1; display: flex; align-items: center; justify-content: center; padding: 18px; min-height: 0; }
+  #page { position: relative; background: var(--page); box-shadow: 0 10px 40px rgba(0,0,0,.6); overflow: hidden; }
+  .slot { position: absolute; overflow: hidden; background: #ddd; cursor: pointer; outline: 2px solid transparent; outline-offset: -2px; transition: outline-color .12s; }
+  .slot img { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; -webkit-user-drag: none; }
+  .slot:hover { outline-color: var(--accent2); }
+  .slot.selected { outline-color: var(--accent); outline-width: 3px; }
+  .slot.swap-target { outline-color: #8f6bff; }
+  .slot .badge { position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px; pointer-events: none; }
+  .slot .focus-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.5); pointer-events: none; display: none; }
+  body.focus-mode .slot.selected .focus-dot { display: block; }
+  body.focus-mode .slot.selected { cursor: crosshair; }
+  .caption { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; color: #777; font-weight: 300; pointer-events: none; }
+  .cover-band { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3em; }
+  .cover-band .t { font-family: Georgia, "Times New Roman", serif; color: #1f1f1f; }
+  .cover-band .s { color: #666; font-weight: 300; }
+  #filmstrip { display: flex; gap: 10px; padding: 10px 16px; overflow-x: auto; background: var(--panel); border-top: 1px solid var(--line); }
+  .thumb-page { position: relative; flex: none; background: #fff; cursor: pointer; border: 2px solid transparent; border-radius: 3px; }
+  .thumb-page.current { border-color: var(--accent); }
+  .thumb-page .mini { position: absolute; background-size: cover; background-position: center; }
+  .thumb-page .num { position: absolute; right: 3px; bottom: 1px; font-size: 10px; color: #666; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  aside section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .row input, .row select { flex: 1; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+  .meta { color: var(--muted); font-size: 12px; }
+  #candidates { flex: 1; min-height: 0; overflow-y: auto; }
+  #cand-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .cand { position: relative; aspect-ratio: 1; background: #000; border-radius: 4px; overflow: hidden; cursor: pointer; border: 2px solid transparent; }
+  .cand img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cand:hover { border-color: var(--accent); }
+  .cand .sc { position: absolute; left: 0; bottom: 0; right: 0; font-size: 10px; padding: 1px 4px; background: linear-gradient(transparent, rgba(0,0,0,.75)); color: #fff; }
+  .cand.other { opacity: .75; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .tabs button { padding: 4px 8px; font-size: 12px; }
+  #toast { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); background: #111; color: #fff; padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
+  #toast.show { opacity: .95; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Album</h1>
+  <input id="title" title="Album title" style="width:260px">
+  <input id="subtitle" title="Subtitle" style="width:220px">
+  <span class="spacer"></span>
+  <button id="prev">◀</button>
+  <span id="pageno" class="meta" style="min-width:90px;text-align:center"></span>
+  <button id="next">▶</button>
+  <button id="relayout" title="Rebuild all pages with a new random rhythm">Re-layout all</button>
+  <button id="export" class="primary">Export PDF</button>
+</header>
+<main>
+  <div id="stage">
+    <div id="viewport"><div id="page"></div></div>
+    <div id="filmstrip"></div>
+  </div>
+  <aside>
+    <section>
+      <h2>Page</h2>
+      <div class="row">
+        <select id="template"></select>
+        <button id="shuffle" title="Next layout for this page">Shuffle layout</button>
+      </div>
+      <div class="row" id="caption-row">
+        <input id="caption" placeholder="Event name / caption">
+        <button id="rename-event" title="Rename the whole event">Rename event</button>
+      </div>
+      <div class="meta" id="page-meta"></div>
+    </section>
+    <section>
+      <h2>Photo</h2>
+      <div class="meta" id="photo-meta">Click a photo on the page to select it.</div>
+      <div class="row">
+        <button id="focus-btn" title="Then click on the photo where it should be centred">Set focus</button>
+        <button id="swap-btn" title="Then click another photo (any page) to swap">Swap</button>
+        <button id="remove-btn" class="danger">Remove</button>
+      </div>
+    </section>
+    <section id="candidates">
+      <h2 id="cand-title">Replace with</h2>
+      <div class="tabs">
+        <button id="tab-event" class="active">Same event</button>
+        <button id="tab-all">All unused</button>
+        <button id="add-mode" title="Click a candidate to add it to this page instead of replacing">Add mode</button>
+      </div>
+      <div id="cand-grid"></div>
+    </section>
+    <section class="meta">
+      <kbd>←</kbd> <kbd>→</kbd> pages · <kbd>Esc</kbd> cancel · drag to swap not needed: use Swap
+    </section>
+  </aside>
+</main>
+<div id="toast"></div>
+
+<script>
+let album = null;
+let cur = 0;                 // current page index
+let selSlot = null;          // selected slot index on the current page
+let mode = null;             // null | 'focus' | 'swap' | 'add'
+let swapFrom = null;         // {page, slot}
+let candTab = 'event';
+let candidates = [];
+
+const $ = id => document.getElementById(id);
+const toast = msg => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1800); };
+
+async function api(route, body) {
+  const r = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const data = await r.json();
+  if (data.error) { toast('Error: ' + data.error); throw new Error(data.error); }
+  return data;
+}
+async function load() {
+  album = await (await fetch('/api/album')).json();
+  $('title').value = album.title; $('subtitle').value = album.subtitle;
+  cur = Math.min(cur, album.pages.length - 1);
+  render();
+}
+function setAlbum(data) { album = data; cur = Math.min(cur, album.pages.length - 1); render(); }
+
+// ----------------------------------------------------------- rendering
+function pageDims() {
+  const [pw, ph] = album.settings.page_mm;
+  const vp = $('viewport');
+  const maxW = vp.clientWidth - 36, maxH = vp.clientHeight - 36;
+  let w = maxW, h = w * ph / pw;
+  if (h > maxH) { h = maxH; w = h * pw / ph; }
+  return { w, h, pw, ph };
+}
+function render() {
+  const page = album.pages[cur];
+  const { w, h, pw, ph } = pageDims();
+  const el = $('page');
+  el.style.width = w + 'px'; el.style.height = h + 'px';
+  el.innerHTML = '';
+  const bust = Date.now();
+  page.slots.forEach((slot, i) => {
+    const [x, y, sw, sh] = slot.rect;
+    const d = document.createElement('div');
+    d.className = 'slot' + (i === selSlot ? ' selected' : '');
+    d.style.left = x * 100 + '%'; d.style.top = y * 100 + '%'; d.style.width = sw * 100 + '%'; d.style.height = sh * 100 + '%';
+    if (slot.photo_id) {
+      const p = album.photos[slot.photo_id];
+      const img = document.createElement('img');
+      img.src = `/display/${p.id}.jpg?v=${bust}`;
+      img.style.objectPosition = `${p.focus[0] * 100}% ${p.focus[1] * 100}%`;
+      d.appendChild(img);
+      const dot = document.createElement('div'); dot.className = 'focus-dot';
+      const vis = visibleFocus(p, sw * pw / (sh * ph));
+      dot.style.left = vis[0] * 100 + '%'; dot.style.top = vis[1] * 100 + '%';
+      d.appendChild(dot);
+      const b = document.createElement('div'); b.className = 'badge'; b.textContent = `${i + 1} · ${p.score.toFixed(2)}`; d.appendChild(b);
+    }
+    d.addEventListener('click', ev => onSlotClick(ev, i, d));
+    el.appendChild(d);
+  });
+  if (page.kind === 'cover') {
+    const band = document.createElement('div'); band.className = 'cover-band';
+    band.style.height = '24%';
+    band.innerHTML = `<div class="t" style="font-size:${h * 0.062}px">${esc(album.title)}</div><div class="s" style="font-size:${h * 0.026}px">${esc(album.subtitle)}</div>`;
+    el.appendChild(band);
+  } else if (page.template !== 'hero-bleed') {
+    const m = album.settings.margin_mm;
+    const cap = document.createElement('div'); cap.className = 'caption';
+    cap.style.padding = `0 ${m / pw * w}px`; cap.style.height = `${m / ph * h * 1.6}px`; cap.style.fontSize = `${h * 0.014}px`;
+    cap.innerHTML = `<span>${esc(page.caption || '')}</span><span>${page.index}</span>`;
+    el.appendChild(cap);
+  }
+  $('pageno').textContent = `${cur + 1} / ${album.pages.length}`;
+  // side panel
+  const tsel = $('template'); tsel.innerHTML = '';
+  if (page.kind === 'photos') {
+    (album.templates[page.slots.length] || []).forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; o.selected = n === page.template; tsel.appendChild(o); });
+    tsel.disabled = false; $('shuffle').disabled = false; $('caption').disabled = false; $('rename-event').disabled = page.event_id == null;
+  } else { tsel.disabled = true; $('shuffle').disabled = true; $('caption').disabled = true; $('rename-event').disabled = true; }
+  $('caption').value = page.caption || '';
+  const ev = page.event_id != null ? album.events.find(e => e.id === page.event_id) : null;
+  $('page-meta').textContent = page.kind === 'cover' ? 'Cover page' : `${page.slots.length} photo(s) · ${page.template}` + (ev ? ` · event ${ev.id + 1}: ${ev.count} photos in library` : '');
+  renderPhotoPanel();
+  renderFilmstrip();
+}
+function visibleFocus(p, slotAspect) {
+  // where the focus point lands inside the cropped slot (0..1)
+  const ia = p.width / p.height;
+  let fx = p.focus[0], fy = p.focus[1];
+  if (ia > slotAspect) { const cw = slotAspect / ia; const x0 = Math.min(Math.max(fx - cw / 2, 0), 1 - cw); return [(fx - x0) / cw, fy]; }
+  const ch = ia / slotAspect; const y0 = Math.min(Math.max(fy - ch / 2, 0), 1 - ch); return [fx, (fy - y0) / ch];
+}
+function esc(s) { return (s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function renderFilmstrip() {
+  const fs = $('filmstrip'); fs.innerHTML = '';
+  const [pw, ph] = album.settings.page_mm; const th = 64, tw = th * pw / ph;
+  album.pages.forEach((pg, i) => {
+    const d = document.createElement('div'); d.className = 'thumb-page' + (i === cur ? ' current' : '');
+    d.style.width = tw + 'px'; d.style.height = th + 'px';
+    pg.slots.forEach(s => {
+      const [x, y, w, h] = s.rect; const m = document.createElement('div'); m.className = 'mini';
+      m.style.left = x * 100 + '%'; m.style.top = y * 100 + '%'; m.style.width = w * 100 + '%'; m.style.height = h * 100 + '%';
+      if (s.photo_id) m.style.backgroundImage = `url(/thumbs/${s.photo_id}.jpg)`;
+      d.appendChild(m);
+    });
+    const n = document.createElement('div'); n.className = 'num'; n.textContent = i === 0 ? 'cover' : pg.index; d.appendChild(n);
+    d.addEventListener('click', () => { if (mode === 'swap') { cur = i; render(); } else goto(i); });
+    fs.appendChild(d);
+  });
+  const c = fs.children[cur]; if (c) c.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+}
+function renderPhotoPanel() {
+  const page = album.pages[cur];
+  const slot = selSlot != null ? page.slots[selSlot] : null;
+  const p = slot && slot.photo_id ? album.photos[slot.photo_id] : null;
+  const has = !!p;
+  ['focus-btn', 'swap-btn', 'remove-btn'].forEach(id => $(id).disabled = !has);
+  $('remove-btn').disabled = !has || page.kind === 'cover';
+  $('focus-btn').classList.toggle('active', mode === 'focus');
+  $('swap-btn').classList.toggle('active', mode === 'swap');
+  $('add-mode').classList.toggle('active', mode === 'add');
+  $('add-mode').disabled = page.kind === 'cover' || page.slots.length >= 6;
+  if (p) {
+    const ev = album.events.find(e => e.id === p.event_id);
+    $('photo-meta').innerHTML = `<b>${esc(p.filename)}</b><br>${p.width}×${p.height} · score ${p.score.toFixed(2)}<br>${esc(p.ts ? p.ts.replace('T', ' ') : 'undated')}<br>${esc(ev ? ev.name : '')}`;
+  } else {
+    $('photo-meta').textContent = mode === 'add' ? 'Add mode: click a candidate to add it to this page.' : 'Click a photo on the page to select it.';
+  }
+  loadCandidates();
+}
+async function loadCandidates() {
+  const page = album.pages[cur];
+  const data = await (await fetch(`/api/candidates?page=${cur}`)).json();
+  candidates = data.candidates;
+  const eid = data.event_id;
+  const list = candTab === 'event' ? candidates.filter(c => c.event_id === eid) : candidates;
+  $('cand-title').textContent = mode === 'add' ? 'Add to page' : (selSlot != null ? 'Replace with' : 'Unused photos');
+  $('tab-event').classList.toggle('active', candTab === 'event'); $('tab-all').classList.toggle('active', candTab === 'all');
+  const g = $('cand-grid'); g.innerHTML = '';
+  if (!list.length) { g.innerHTML = '<div class="meta">No unused photos here.</div>'; return; }
+  list.slice(0, 400).forEach(c => {
+    const d = document.createElement('div'); d.className = 'cand' + (c.event_id === eid ? '' : ' other');
+    d.title = `${c.filename}\nscore ${c.score.toFixed(2)}\n${c.ts || ''}`;
+    d.innerHTML = `<img src="/thumbs/${c.id}.jpg" loading="lazy"><div class="sc">${c.score.toFixed(2)}${c.event_id !== eid ? ' · other event' : ''}</div>`;
+    d.addEventListener('click', () => useCandidate(c));
+    g.appendChild(d);
+  });
+}
+async function useCandidate(c) {
+  if (mode === 'add') { setAlbum(await api('/api/add', { page: cur, photo_id: c.id })); toast('Added'); return; }
+  if (selSlot == null) { toast('Select a photo on the page first (or use Add mode)'); return; }
+  toast('Processing…');
+  setAlbum(await api('/api/replace', { page: cur, slot: selSlot, photo_id: c.id }));
+  toast('Replaced');
+}
+
+// --------------------------------------------------------- interaction
+function goto(i) { cur = Math.max(0, Math.min(album.pages.length - 1, i)); selSlot = null; if (mode !== 'swap') mode = null; document.body.classList.remove('focus-mode'); render(); }
+async function onSlotClick(ev, i, el) {
+  const page = album.pages[cur];
+  const slot = page.slots[i];
+  if (mode === 'focus' && i === selSlot && slot.photo_id) {
+    const p = album.photos[slot.photo_id];
+    const r = el.getBoundingClientRect();
+    const u = (ev.clientX - r.left) / r.width, v = (ev.clientY - r.top) / r.height;
+    // map click inside the cropped slot back to full-image coordinates
+    const [x, y, sw, sh] = slot.rect; const slotAspect = (sw * album.settings.page_mm[0]) / (sh * album.settings.page_mm[1]);
+    const ia = p.width / p.height; let fx, fy;
+    if (ia > slotAspect) { const cw = slotAspect / ia; const x0 = Math.min(Math.max(p.focus[0] - cw / 2, 0), 1 - cw); fx = x0 + u * cw; fy = v; }
+    else { const ch = ia / slotAspect; const y0 = Math.min(Math.max(p.focus[1] - ch / 2, 0), 1 - ch); fx = u; fy = y0 + v * ch; }
+    setAlbum(await api('/api/focus', { photo_id: p.id, fx, fy }));
+    return;
+  }
+  if (mode === 'swap' && swapFrom) {
+    if (swapFrom.page === cur && swapFrom.slot === i) return;
+    setAlbum(await api('/api/swap', { a: swapFrom, b: { page: cur, slot: i } }));
+    mode = null; swapFrom = null; selSlot = i; render(); toast('Swapped');
+    return;
+  }
+  selSlot = (selSlot === i) ? null : i;
+  mode = null; document.body.classList.remove('focus-mode');
+  render();
+}
+$('prev').onclick = () => goto(cur - 1);
+$('next').onclick = () => goto(cur + 1);
+$('shuffle').onclick = async () => setAlbum(await api('/api/template', { page: cur }));
+$('template').onchange = async e => setAlbum(await api('/api/template', { page: cur, template: e.target.value }));
+$('caption').onchange = async e => setAlbum(await api('/api/caption', { page: cur, caption: e.target.value }));
+$('rename-event').onclick = async () => {
+  const page = album.pages[cur]; if (page.event_id == null) return;
+  const ev = album.events.find(e => e.id === page.event_id);
+  const name = $('caption').value.trim() || ev.name;
+  setAlbum(await api('/api/event', { event_id: ev.id, name })); toast('Event renamed on all its pages');
+};
+$('title').onchange = $('subtitle').onchange = async () => setAlbum(await api('/api/title', { title: $('title').value, subtitle: $('subtitle').value }));
+$('focus-btn').onclick = () => { mode = mode === 'focus' ? null : 'focus'; document.body.classList.toggle('focus-mode', mode === 'focus'); renderPhotoPanel(); if (mode === 'focus') toast('Click on the photo where it should be centred'); };
+$('swap-btn').onclick = () => { if (mode === 'swap') { mode = null; swapFrom = null; } else { mode = 'swap'; swapFrom = { page: cur, slot: selSlot }; toast('Now click the photo to swap with (you can change page)'); } renderPhotoPanel(); };
+$('remove-btn').onclick = async () => { setAlbum(await api('/api/remove', { page: cur, slot: selSlot })); selSlot = null; render(); toast('Removed from page'); };
+$('add-mode').onclick = () => { mode = mode === 'add' ? null : 'add'; selSlot = null; render(); };
+$('tab-event').onclick = () => { candTab = 'event'; loadCandidates(); };
+$('tab-all').onclick = () => { candTab = 'all'; loadCandidates(); };
+$('relayout').onclick = async () => { if (!confirm('Rebuild every page with a new layout? Photo choices are kept, page edits are not.')) return; setAlbum(await api('/api/relayout', { seed: Math.floor(Math.random() * 1e6) })); toast('Re-laid out'); };
+$('export').onclick = async () => {
+  const btn = $('export'); btn.disabled = true; btn.textContent = 'Exporting…';
+  try { const r = await api('/api/export', { dpi: 300 }); toast('PDF written: ' + r.path); alert('PDF written to:\n' + r.path); }
+  finally { btn.disabled = false; btn.textContent = 'Export PDF'; }
+};
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowLeft') goto(cur - 1);
+  if (e.key === 'ArrowRight') goto(cur + 1);
+  if (e.key === 'Escape') { mode = null; swapFrom = null; selSlot = null; document.body.classList.remove('focus-mode'); render(); }
+});
+window.addEventListener('resize', () => album && render());
+load();
+</script>
+</body>
+</html>
