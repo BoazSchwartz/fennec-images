@@ -2,3 +2,9 @@ pillow>=10
 numpy>=1.24
 reportlab>=4
 pillow-heif>=0.13   # optional: HEIC/HEIF (iPhone) photos
+onnxruntime>=1.17   # Classify: the local CLIP model (optional -- heuristics without it)
+pymupdf>=1.24       # Classify: pdf text + preview
+python-docx>=1.1    # Classify: docx text
+openpyxl>=3.1       # Classify: xlsx text
+opencv-python-headless>=4.8   # Classify: face count when the CLIP model is off
+# Not pip: Tesseract OCR with the Hebrew pack (C:\Program Files\Tesseract-OCR, heb + eng)

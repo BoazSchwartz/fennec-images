@@ -1,0 +1,10 @@
+.idea
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv
+setups/local_files/
+data/
+/log/
+docs/prompts.csv.bak
+/fennec_images/log/

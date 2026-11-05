@@ -12,6 +12,18 @@ py -3 album.py serve  .\italy_album            # opens http://127.0.0.1:8765/
 py -3 album.py export .\italy_album --bleed 3  # writes italy_album\album.pdf
 ```
 
+## The desktop app (Fennec Images)
+
+```
+py -3 fennec_images\gui\run.py      # or the "Fennec Images" desktop shortcut
+```
+
+Tabs: **Classify** (sort a folder's photos into Trip / Party / Other photo and its
+text images and documents into Advertisement / School message / Notification /
+Document, all on this machine: a local CLIP model via onnxruntime + Tesseract OCR +
+keyword rules), **Albums** (the pipeline below behind buttons), **Prompts** and
+**General** (as in fennec-bookkeeping). Details in CLAUDE.md.
+
 ## What `build` does
 
 1. **Scan** every image under the folder (jpg, png, webp, tiff, heic with
