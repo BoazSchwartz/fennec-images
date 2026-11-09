@@ -39,6 +39,7 @@ fennec-images/
         src/clip_model.py   CLIP zero-shot on onnxruntime, own BPE tokenizer (no torch)
         src/extract_text.py OCR (tesseract.exe), pdf, docx, html, txt, xlsx text
         src/override.py     the OVERRIDE POLICY (Skip / Override / Bak)
+        src/class_sheet.py  the folder's classification.xlsx (write / read back, no tkinter)
         log/                daily log files (gitignored)
 ```
 
@@ -68,9 +69,16 @@ switches, Download Model, Set Class, Open File, Copy to Class Folders + If exist
 a Preview (image or pdf page 1, plus the class, the reason and the text read); log at the
 bottom. Actions work on the CHECKED rows, or the selected ones when none is checked.
 Text column: the text read, on one line. Double-click on it opens a window with all the text
-(Copy, Close, Esc). The cache keeps only TEXT_SNIPPET (600) characters, so when the cached
-text is that long or missing, the window re-reads the file (OCR / document text) on a
-background thread. A double-click on any other column opens the file.
+(Copy, Close, Esc). Results keep the whole text (up to ClassifySheet.TEXT_MAX = 32000, the
+Excel cell limit) and Result.text_full says it is complete; when it is not (no text read, or
+an old cache entry's 600-char snippet) the window re-reads the file (OCR / document text) on a
+background thread and stores the full text back. A double-click on any other column opens it.
+Folder sheet: the folder's classes and texts are saved IN the folder, in
+<folder>\fennec_images\classification.xlsx (ClassifySheet: Name, Size, Modified, Kind, Class,
+Conf., Manual, Method, Words, Reason, Scores, Text), one row per file, rewritten whole after
+every Classify run, Set Class and full-text read (the app's own file: always replaced; an
+Excel holding it open gives a logged error). On load, files the cache lacks take their result
+from the sheet when name and size match, so a folder carries its classification with it.
 How a file is classified (src/classify.py):
 - Image: CLIP scores four groups (trip / party / other / text, ClipModel.PROMPTS, each group
   the best of several prompts, then a softmax). Tesseract runs unless CLIP rules text out
@@ -111,6 +119,7 @@ thread (first free port from 8765), one per album folder, alive while the app is
 CONFIG MODULE
 -------------
 fennec_images/config.py: ImagesConfig (identity, local dir), ImagesState (state.json keys),
-SashConfig (adds the tabs' sash keys), ClassifyClasses, ClassifyFiles, ClassifyOcr, ClipModel,
+SashConfig (adds the tabs' sash keys), ClassifyClasses, ClassifyFiles, ClassifySheet,
+ClassifyOcr, ClipModel,
 ClassifyRules, UIStrings(CommonUIStrings), OverridePolicy; plus the shared classes re-exported.
 Thresholds and keyword lists live there, never inline.

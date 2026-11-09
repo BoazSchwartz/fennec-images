@@ -26,11 +26,11 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 
 from fennec_images.config import (ClassifyClasses as _C, ClassifyFiles as _CF,
-                                  ClassifyOcr as _OCR, ClassifyRules as _R, ClipModel as _CM,
-                                  ImagesConfig as _IC)
+                                  ClassifyOcr as _OCR, ClassifyRules as _R, ClassifySheet as _SH,
+                                  ClipModel as _CM, ImagesConfig as _IC)
 from fennec_images.src import extract_text as xt
 
-TEXT_SNIPPET = 600
+TEXT_MAX = _SH.TEXT_MAX         # the text kept (cache and folder sheet), not a snippet
 
 
 @dataclass
@@ -45,6 +45,11 @@ class Result:
     reason: str = ''
     text: str = ''
     manual: bool = False
+    text_full: bool = False      # text is all the file's text (old cache entries kept 600 chars)
+
+
+def _cut(text: str) -> tuple[str, bool]:
+    return text[:TEXT_MAX], bool(text.strip()) and len(text) <= TEXT_MAX
 
 
 def file_kind(path: str) -> str:
@@ -174,8 +179,9 @@ class Classifier:
         if not text.strip():
             return Result(path, _C.UNKNOWN, 0.0, 'document', method, reason='no text')
         cls, conf, why = text_class(text, words)
-        return Result(path, cls, conf, 'document', method, words, reason=why,
-                      text=text[:TEXT_SNIPPET])
+        text, full = _cut(text)
+        return Result(path, cls, conf, 'document', method, words, reason=why, text=text,
+                      text_full=full)
 
     def _image(self, path: str) -> Result:
         im = xt.open_image(path)
@@ -195,6 +201,7 @@ class Classifier:
         if self.use_ocr and (self.clip is None or probs['text'] > 0.15):
             text, words = xt.ocr_image(im)
             method += '+ocr'
+        text, full = _cut(text)
         scores = {k: round(v, 3) for k, v in probs.items()}
         p_text = probs['text']
         is_text = words >= _OCR.WORDS_TEXT_SURE or p_text >= _OCR.CLIP_TEXT_SURE or \
@@ -203,15 +210,15 @@ class Classifier:
             cls, conf, why = text_class(text, words, prior)
             conf = round(min(0.99, 0.5 * conf + 0.5 * max(p_text, min(1.0, words / 40))), 2)
             return Result(path, cls, conf, 'image', method, words, scores,
-                          f'text image ({words} words, text p={p_text:.2f}); {why}',
-                          text[:TEXT_SNIPPET])
+                          f'text image ({words} words, text p={p_text:.2f}); {why}', text,
+                          text_full=full)
         photo = {'trip': _C.TRIP, 'party': _C.PARTY, 'other': _C.OTHER}
         sub = {k: probs[k] for k in photo}
         tot = sum(sub.values()) or 1.0
         best = max(sub, key=sub.get)
         why = ', '.join(f'{k} {v / tot:.2f}' for k, v in sub.items())
         return Result(path, photo[best], round(sub[best] / tot, 2), 'image', method, words, scores,
-                      f'photo ({why}; {words} words)', text[:TEXT_SNIPPET])
+                      f'photo ({why}; {words} words)', text, text_full=full)
 
 
 # ── Events ────────────────────────────────────────────────────────────────────

@@ -74,6 +74,33 @@ class ClassifyFiles:
     PDF_OCR_DPI = 200
 
 
+class ClassifySheet:
+    """The classification written into the classified folder itself:
+    <folder>\\fennec_images\\classification.xlsx, one row per file, rewritten after every run,
+    Set Class and full-text read. On load it restores the rows the local cache lacks."""
+    DIR_OUT = 'fennec_images'
+    FILE_XLSX = 'classification.xlsx'
+    SHEET = 'Classification'
+    TEXT_MAX = 32000            # an Excel cell holds at most 32767 characters
+    COL_NAME = 'Name'
+    COL_SIZE = 'Size (bytes)'
+    COL_MODIFIED = 'Modified'
+    COL_KIND = 'Kind'
+    COL_CLASS = 'Class'
+    COL_CONF = 'Conf.'
+    COL_MANUAL = 'Manual'
+    COL_METHOD = 'Method'
+    COL_WORDS = 'Words'
+    COL_REASON = 'Reason'
+    COL_SCORES = 'Scores'
+    COL_TEXT = 'Text'
+    COLUMNS = [COL_NAME, COL_SIZE, COL_MODIFIED, COL_KIND, COL_CLASS, COL_CONF, COL_MANUAL,
+               COL_METHOD, COL_WORDS, COL_REASON, COL_SCORES, COL_TEXT]
+    WIDTHS = {COL_NAME: 40, COL_SIZE: 12, COL_MODIFIED: 17, COL_KIND: 10, COL_CLASS: 16,
+              COL_CONF: 7, COL_MANUAL: 8, COL_METHOD: 16, COL_WORDS: 7, COL_REASON: 50,
+              COL_SCORES: 30, COL_TEXT: 80}
+
+
 class ClassifyOcr:
     """Tesseract is called as an exe (no pytesseract needed). 'heb+eng' covers the WhatsApp
     traffic of the household."""

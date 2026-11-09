@@ -15,6 +15,7 @@ from PIL import Image, ImageTk
 from fennec_images import config
 from fennec_images.gui import common as cm
 from fennec_images.src import classify as cl
+from fennec_images.src import class_sheet as sh
 from fennec_images.src import clip_model, override
 from fennec_images.src import extract_text as xt
 
@@ -47,6 +48,7 @@ class ClassifyTabMixin:
         self._cls_stop = threading.Event()
         self._cls_running = False
         self._cls_photo = None              # keeps the preview image alive
+        self._cls_dir = ''                  # the folder loaded, where its sheet is written
 
         top = ttk.Frame(f)
         top.pack(fill='x', padx=6, pady=(6, 2))
@@ -176,11 +178,21 @@ class ClassifyTabMixin:
             self._append_log(f'[CLASSIFY] Not a folder: {path_dir}\n')
             return
         self._state[_IS.KEY_CLASSIFY_DIR] = path_dir
+        self._cls_dir = path_dir
         rows = cl.list_files(path_dir)
+        sheet = sh.read_sheet(path_dir)
         self._cls_rows = {}
+        n_sheet = 0
         for i, r in enumerate(rows):
             r['res'] = cl.cached(self._cls_cache, r['path'])
+            got = sheet.get(r['name'])
+            if r['res'] is None and got and got['size'] == r['size']:
+                r['res'] = cl.Result(**got['res'])          # classified elsewhere, or cache lost
+                cl.remember(self._cls_cache, r['res'])
+                n_sheet += 1
             self._cls_rows[str(i)] = r
+        if n_sheet:
+            self._cls_save_cache()
         self._cls_checked = set()
         n_done = sum(1 for r in rows if r['res'])
         kinds = {}
@@ -188,7 +200,8 @@ class ClassifyTabMixin:
             kinds[r['kind']] = kinds.get(r['kind'], 0) + 1
         self._append_log(f'[CLASSIFY] {path_dir}: {len(rows)} files '
                          f'({", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))}), '
-                         f'{n_done} already classified\n')
+                         f'{n_done} already classified'
+                         + (f' ({n_sheet} from {sh.sheet_path(path_dir)})' if n_sheet else '') + '\n')
         self._cls_render()
 
     # ── Table ─────────────────────────────────────────────────────────────────
@@ -418,6 +431,7 @@ class ClassifyTabMixin:
         self._cls_save_cache()
         self._cls_set_running(False)
         self._cls_render()
+        self._cls_save_sheet(log=True)
         counts = {}
         for _i, res in done:
             counts[res.cls] = counts.get(res.cls, 0) + 1
@@ -431,6 +445,19 @@ class ClassifyTabMixin:
             cl.save_cache(self._cls_cache)
         except OSError as exc:
             self._append_log(f'[ERROR] Cannot save the class cache: {exc}\n')
+
+    def _cls_save_sheet(self, log: bool = False) -> None:
+        """The folder's classes and texts into <folder>\\fennec_images\\classification.xlsx."""
+        if not self._cls_dir or not os.path.isdir(self._cls_dir):
+            return
+        try:
+            path = sh.write_sheet(self._cls_dir, list(self._cls_rows.values()))
+        except Exception as exc:                    # PermissionError when Excel has it open
+            self._append_log(f'[ERROR] Cannot write {sh.sheet_path(self._cls_dir)}: {exc}\n')
+            return
+        if log:
+            n = sum(1 for r in self._cls_rows.values() if r['res'])
+            self._append_log(f'[CLASSIFY] {n} classified file(s) saved to {path}\n')
 
     # ── Text popup ────────────────────────────────────────────────────────────
 
@@ -446,8 +473,9 @@ class ClassifyTabMixin:
         return 'break'
 
     def _cls_show_text(self, iid: str) -> None:
-        """A window with all the text of the file; the cache keeps only a snippet, so a
-        truncated or missing text is read again from the file on a background thread."""
+        """A window with all the text of the file. A text not known to be complete (missing, or
+        an old cache entry's 600-char snippet) is read again on a background thread and stored
+        back into the cache and the folder sheet."""
         r = self._cls_rows[iid]
         res = r['res']
         text = res.text if res else ''
@@ -482,7 +510,7 @@ class ClassifyTabMixin:
             n = len(body.split())
             lbl.configure(text=note or f'{n} words, {len(body)} characters')
 
-        if text and len(text) < cl.TEXT_SNIPPET:
+        if res and res.text_full:
             show(text)
             return
         show(text, _UI.LBL_TEXT_READING)
@@ -497,7 +525,16 @@ class ClassifyTabMixin:
             except Exception as exc:
                 self._log_queue.put(f'[ERROR] Cannot read the text of {r["name"]}: {exc}\n')
                 full = ''
-            self.after(0, lambda: show(full or text))
+            self.after(0, lambda: done(full))
+
+        def done(full: str) -> None:
+            show(full or text)
+            if res and full.strip() and r.get('res') is res:
+                res.text, res.text_full = full[:cl.TEXT_MAX], len(full) <= cl.TEXT_MAX
+                cl.remember(self._cls_cache, res)
+                self._cls_save_cache()
+                self._cls_refresh_row(iid)
+                self._cls_save_sheet()
 
         self._start_background(work)
 
@@ -517,6 +554,7 @@ class ClassifyTabMixin:
             cl.remember(self._cls_cache, res)
             self._cls_refresh_row(iid)
         self._cls_save_cache()
+        self._cls_save_sheet()
         self._append_log(f'[CLASSIFY] {len(iids)} file(s) set to {cls}\n')
 
     def _cls_open(self) -> None:
