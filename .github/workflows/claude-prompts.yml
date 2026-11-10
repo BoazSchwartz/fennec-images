@@ -76,8 +76,17 @@ jobs:
       PROMPTS: ${{ inputs.prompts }}
       STAMP: ${{ inputs.stamp }}
       MODEL: ${{ inputs.model }}
-      RND_DIR: ${{ runner.temp }}/rnd
     steps:
+      # RND_DIR - where the run keeps its own files, outside the checkout so
+      # none of them is ever committed - is set HERE and not in the env of the
+      # job above: the `runner` context does not exist at the level of a job,
+      # and GitHub refuses the whole file for naming it there ("Unrecognized
+      # named-value: 'runner'"), which is what every run of this workflow
+      # answered until 2026-11-10 - a failed run on each push, and a 422 to
+      # every dispatch.
+      - name: Where the run keeps its own files
+        run: echo "RND_DIR=$RUNNER_TEMP/rnd" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
