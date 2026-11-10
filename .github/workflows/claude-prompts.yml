@@ -1,0 +1,321 @@
+# The prompts loop, run on GitHub instead of on a PC (prompt p323).
+#
+# The window on the PC works the prompts of docs/prompts.csv by starting a
+# headless Claude Code run on the repository: `claude --print` with the
+# general prompt and the picked rows on stdin, bypassPermissions, and the run
+# answers each prompt on its own row of the ledger. This workflow is that same
+# run on a GitHub runner, started from the R&D page of fennecsig.com (/rnd,
+# worker/rnd.js dispatches it) or by hand from the Actions tab: it checks the
+# repository out, composes the very same prompt from the ledger, runs Claude
+# Code, and then - the one thing the window leaves to a person - commits what
+# changed to a branch of its own, rnd/run-<number>, and opens a pull request
+# against the default branch. Nothing is pushed to main by it; the PR is
+# merged from /rnd or on GitHub.
+#
+# It reads BOTH shapes of ledger: fennec-digital's (an `id` column, p323; a
+# `status` column, open|done|dropped) and the seven columns the other Fennec
+# repositories share (requested, executed, category, request, notes, work,
+# files - a prompt is "csv row N", header not counted, and is open while
+# `executed` is empty). The general prompt it composes is the one the window
+# of that repository composes, so a run from here and a run from the PC are
+# the same ask.
+#
+# And a THIRD shape (2026-11-10, when the dcvista and resolight repositories
+# joined the pool): five columns - datetime, category, request, work, files -
+# newest first, where a row with an EMPTY datetime is a request still waiting.
+# A new row goes on top of such a file, so a row number counted from the top
+# moves with every prompt added; the id of a row there is therefore counted
+# from the BOTTOM (r1 is the oldest row), which is what /rnd sends, and the
+# prompt composed here names each row by where it is at this moment.
+#
+# SECRETS (Settings > Secrets and variables > Actions, per repository or on
+# the account): ONE of
+#   ANTHROPIC_API_KEY          an API key (billed to the API), or
+#   CLAUDE_CODE_OAUTH_TOKEN    `claude setup-token` on a PC signed in to a
+#                              Pro/Max subscription
+# Nothing else. GITHUB_TOKEN is the workflow's own and is enough to push the
+# branch and open the PR (Settings > Actions > General > Workflow permissions
+# must allow "Read and write" and "Allow GitHub Actions to create and approve
+# pull requests").
+#
+# This file is copied into the other repositories by /rnd (Set up), so it
+# must stay generic: nothing in it names this repository.
+
+name: Claude prompts
+run-name: "prompts ${{ inputs.prompts || 'open' }} (rnd)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompts:
+        description: "The prompts to work, ids separated by commas: p323,p322 - or r12,r13, the row numbers, in a repository whose ledger has no id column (counted from the top; from the BOTTOM in a five-column, newest-first ledger). Empty: every open prompt."
+        required: false
+        default: ""
+      stamp:
+        description: "The datetime to write into `executed` (YYYY-MM-DD HH:MM). Empty: now, Asia/Jerusalem."
+        required: false
+        default: ""
+      model:
+        description: "The model (claude-opus-5-5, claude-sonnet-5-5, ...). Empty: the CLI's default."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: claude-prompts-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      PROMPTS: ${{ inputs.prompts }}
+      STAMP: ${{ inputs.stamp }}
+      MODEL: ${{ inputs.model }}
+      RND_DIR: ${{ runner.temp }}/rnd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Compose the prompt from the ledger
+        id: compose
+        shell: python
+        run: |
+          import csv, io, os, sys, datetime, zoneinfo, pathlib
+          out = pathlib.Path(os.environ['RND_DIR']); out.mkdir(parents=True, exist_ok=True)
+          ids = [s.strip() for s in os.environ.get('PROMPTS', '').split(',') if s.strip()]
+          stamp = os.environ.get('STAMP', '').strip() or datetime.datetime.now(
+              zoneinfo.ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M')
+          raw = open('docs/prompts.csv', encoding='utf-8-sig', newline='').read()
+          table = list(csv.reader(io.StringIO(raw)))
+          head = [h.strip() for h in table[0]]
+          col = {h: i for i, h in enumerate(head)}
+          has_id = 'id' in col and 'status' in col
+          is_log = not has_id and 'datetime' in col and 'executed' not in col
+          rows = [r + [''] * (len(head) - len(r)) for r in table[1:] if any(c.strip() for c in r)]
+          def cell(r, name): return r[col[name]].strip() if name in col else ''
+          picked = []
+          for n, r in enumerate(rows, 1):
+              if has_id:
+                  rid = cell(r, 'id') or ('r%d' % n)
+                  is_open = cell(r, 'status') == 'open'
+              elif is_log:
+                  rid = 'r%d' % (len(rows) - n + 1)    # from the bottom: it never moves
+                  is_open = not cell(r, 'datetime')
+              else:
+                  rid = 'r%d' % n
+                  is_open = not cell(r, 'executed')
+              if ids:
+                  if rid in ids: picked.append((rid, n, r))
+              elif is_open:
+                  picked.append((rid, n, r))
+          if ids:
+              order = {k: i for i, k in enumerate(ids)}
+              picked.sort(key=lambda t: order.get(t[0], 999))
+          else:
+              picked.sort(key=lambda t: t[1])
+          if not picked:
+              print('nothing to work: no prompt matched', ids or 'open')
+              open(os.environ['GITHUB_OUTPUT'], 'a').write('count=0\n')
+              sys.exit(0)
+          if has_id:
+              general = [
+                  'Read CLAUDE.md in this directory, then work on the prompts picked below, in their order.',
+                  'A prompt names the page it was raised on, as it is served: index.html is the public site '
+                  '(src/index.html on disk), recipes/... is a recipe page, wiki/... is a page of this wiki - every '
+                  'one of them under src/. A prompt with no page was typed. The work is done in the repository - '
+                  "the site's file, the recipe tooling or spreadsheet, the wiki page, the code - never on a served "
+                  'copy, and a recipe is never hand-edited under src/recipes/.',
+                  'For each prompt: do the work; then answer it on its own row of docs/prompts.csv - the one store, '
+                  'a row a prompt - by filling in work (see the next paragraph for how it is written), files (every '
+                  'file touched, repository-relative), category, status "done" (or "dropped", the work saying why) '
+                  'and executed set to the datetime given below. Change nothing else of the row: id, created and '
+                  'the anchor are what a prompt is.',
+                  'The work field is written in two parts, in this order, and the first of them is not optional. '
+                  'FIRST a plain-language summary of two to four sentences, of the kind a tired person who writes '
+                  'no code can read at a glance: what was wrong or what was asked, what it does now, and - if '
+                  'anything is left for Boaz himself to do - what he has to do next, said as plainly as that. Say so '
+                  'when there is nothing for him to do. No file names, no function names and no jargon in those '
+                  'sentences. THEN a blank line, and after it the detail: what was actually changed and why, as long '
+                  'as it needs to be and as comprehensive as the change deserves - this half may name files, '
+                  'functions, tables and anything else. A prompt that is dropped is answered the same way, its '
+                  'summary saying in plain words why it was not done.',
+                  'This run is on a GitHub Actions runner, not on the PC: there is no window, no helper server, no '
+                  'browser and no Cloudflare login. Do not try to serve or screenshot pages; verify by reading the '
+                  'files and by running the node and python checks that need nothing of the machine.',
+                  'Do not commit, do not push and do not deploy; leave the work in the working tree - the workflow '
+                  'commits it to a branch and opens a pull request.',
+              ]
+          elif is_log:
+              general = [
+                  'Read CLAUDE.md in this directory (and whichever topic file beside it a request needs), then '
+                  'work on the requests picked below, in their order. A request is a row of docs/prompts.csv - '
+                  'five columns, datetime, category, request, work, files, newest first - and a row with an '
+                  'EMPTY datetime is a request still waiting. Each is named below by its row number counted '
+                  'from the top, header not counted ("csv row N"), and by its own words.',
+                  'For each request: do the work; then write the outcome into ITS OWN ROW of docs/prompts.csv, '
+                  'which is the log itself, rewriting the file with the csv module, every column of every other '
+                  'row kept exactly as it is and the order of the rows kept: datetime = the datetime given below, '
+                  'category = one the file already uses (kept, if the row has one), work = what was done, '
+                  'concrete and in the past tense (or why it was not done), files = every file touched, '
+                  'repository-relative and comma separated. Leave request as it is. Where CLAUDE.md asks for '
+                  'more than that when a request is answered, do that too.',
+                  'Update CLAUDE.md when a convention or a structure it describes has moved.',
+                  'This run is on a GitHub Actions runner, not on the PC: there is no window, no desktop, no '
+                  'helper server and no browser. Do not try to start the GUI or to serve pages; verify by '
+                  'reading the files and by running what needs nothing of the machine (py_compile, small '
+                  'scripts).',
+                  'Do not commit and do not push; leave the work in the working tree - the workflow commits it '
+                  'to a branch and opens a pull request.',
+              ]
+          else:
+              general = [
+                  'Read CLAUDE.md (and CLAUDE_GENERAL.md if it is there) in this directory, then work on the '
+                  'requests picked below, in their order. A request is a row of docs/prompts.csv and is named by '
+                  'its row number, header not counted ("csv row N").',
+                  'Treat the notes column of a row as part of the request. For each request: do the work; then '
+                  'write the outcome back into ITS OWN row of docs/prompts.csv, editing the file in place and '
+                  'keeping the column order and the order of the rows: executed = the datetime given below '
+                  '(written the way the other rows of the file write it), category added if the row has none, '
+                  'work = one or two sentences saying what was done (or why it was not), files = every file '
+                  'touched, repository-relative, and anything worth remembering added to notes. Leave requested '
+                  'and request as they are.',
+                  'Update CLAUDE.md when a convention or a structure it describes has moved.',
+                  'This run is on a GitHub Actions runner, not on the PC: there is no window and no desktop. Do not '
+                  'try to start the GUI; verify by reading the files and by running what needs nothing of the '
+                  'machine (py_compile, small scripts).',
+                  'Do not commit and do not push; leave the work in the working tree - the workflow commits it to '
+                  'a branch and opens a pull request.',
+              ]
+          lines = ['The prompts, %d of them:' % len(picked), '']
+          for k, (rid, n, r) in enumerate(picked, 1):
+              if has_id:
+                  where = ', on %s' % cell(r, 'page') if cell(r, 'page') else ''
+                  cat = cell(r, 'category')
+                  lines.append('[%d] (%s, raised %s%s%s) %s' % (
+                      k, rid, cell(r, 'created'), where,
+                      (', file it under %s' % cat) if cat else '', cell(r, 'request')))
+                  if cell(r, 'quote'):
+                      lines.append('    the words it was raised on: "%s"' % cell(r, 'quote'))
+              elif is_log:
+                  cat = cell(r, 'category')
+                  lines.append('[%d] (csv row %d%s) %s' % (
+                      k, n, (', category %s' % cat) if cat else ', no category yet', cell(r, 'request')))
+              else:
+                  cat = cell(r, 'category')
+                  lines.append('[%d] (csv row %d%s%s) %s' % (
+                      k, n, (', requested %s' % cell(r, 'requested')) if cell(r, 'requested') else '',
+                      (', category %s' % cat) if cat else '', cell(r, 'request')))
+                  if cell(r, 'notes'):
+                      lines.append('    notes: %s' % cell(r, 'notes'))
+              lines.append('')
+          lines.append('The datetime to stamp into the row of each finished prompt is %s - the time this run '
+                       'was sent.' % stamp)
+          text = '\n'.join(general) + '\n\n' + '\n'.join(lines) + '\n'
+          (out / 'prompt.md').write_text(text, encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('count=%d\n' % len(picked))
+              f.write('ids=%s\n' % ','.join(t[0] for t in picked))
+              f.write('stamp=%s\n' % stamp)
+          print(text)
+
+      - name: Work the prompts
+        if: steps.compose.outputs.count != '0'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -o pipefail
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set on this repository (Settings > Secrets and variables > Actions)"
+            exit 1
+          fi
+          # an empty key must not be seen by the CLI: it would try the API with nothing
+          [ -z "$ANTHROPIC_API_KEY" ] && unset ANTHROPIC_API_KEY
+          [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && unset CLAUDE_CODE_OAUTH_TOKEN
+          MODEL_ARG=""
+          [ -n "$MODEL" ] && MODEL_ARG="--model $MODEL"
+          claude --print --verbose --output-format stream-json \
+                 --permission-mode bypassPermissions $MODEL_ARG \
+                 < "$RND_DIR/prompt.md" | tee "$RND_DIR/claude-run.log" \
+                 | python3 -c '
+          import sys, json
+          for line in sys.stdin:
+              try: e = json.loads(line)
+              except Exception: continue
+              t = e.get("type")
+              if t == "assistant":
+                  for b in e.get("message", {}).get("content", []):
+                      if b.get("type") == "text": print(b["text"][:2000])
+                      elif b.get("type") == "tool_use": print("  [" + b.get("name", "") + "] " + json.dumps(b.get("input", {}))[:160])
+              elif t == "result":
+                  print("--- result: turns=%s seconds=%.0f" % (e.get("num_turns"), (e.get("duration_ms") or 0) / 1000))
+          '
+
+      - name: The summary of the run
+        if: always() && steps.compose.outputs.count != '0'
+        shell: python
+        run: |
+          import json, os, pathlib
+          d = pathlib.Path(os.environ['RND_DIR'])
+          result = ''
+          log = d / 'claude-run.log'
+          if log.is_file():
+              for line in log.read_text(encoding='utf-8', errors='replace').splitlines():
+                  try: e = json.loads(line)
+                  except Exception: continue
+                  if e.get('type') == 'result':
+                      result = e.get('result') or ''
+          text = ('## Claude prompts run %s\n\nPrompts: `%s`\nStamp: `%s`\n\n%s\n' % (
+              os.environ.get('GITHUB_RUN_NUMBER', ''), os.environ.get('IDS', ''),
+              os.environ.get('STAMP_OUT', ''), result or '_(the run left no summary)_'))
+          (d / 'summary.md').write_text(text, encoding='utf-8')
+          open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8').write(text)
+        env:
+          IDS: ${{ steps.compose.outputs.ids }}
+          STAMP_OUT: ${{ steps.compose.outputs.stamp }}
+
+      - name: Commit to a branch and open a pull request
+        if: steps.compose.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDS: ${{ steps.compose.outputs.ids }}
+        run: |
+          git config user.name "Claude (rnd)"
+          git config user.email "noreply@anthropic.com"
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "nothing changed in the working tree; no branch and no pull request"
+            exit 0
+          fi
+          BR="rnd/run-${{ github.run_number }}"
+          git checkout -b "$BR"
+          git add -A
+          git commit -m "prompts ${IDS} (rnd run ${{ github.run_number }})" \
+                     -m "Worked on a GitHub Actions runner from fennecsig.com/rnd." \
+                     -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push -u origin "$BR"
+          gh pr create --base "${{ github.ref_name }}" --head "$BR" \
+             --title "prompts ${IDS} (rnd run ${{ github.run_number }})" \
+             --body-file "$RND_DIR/summary.md"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.compose.outputs.count != '0'
+        with:
+          name: claude-run-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/rnd/prompt.md
+            ${{ runner.temp }}/rnd/claude-run.log
+            ${{ runner.temp }}/rnd/summary.md
+          if-no-files-found: ignore
