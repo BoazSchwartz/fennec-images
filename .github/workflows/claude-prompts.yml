@@ -49,6 +49,28 @@
 # long ago to be believed. A run on an API key is told no such thing and
 # leaves no such file.
 #
+# THE LIMIT ONE MODEL HAS (prompt p335). A third limit is told only in the
+# replies of the model it belongs to: the week of Fable, which the stream
+# names `seven_day_overage_included` and which no reply of Opus, Sonnet or
+# Haiku carries (looked at on 2026-11-11: runs #8, #11 and #13). So a run
+# keeps EVERY limit any of its reports named, each as it was last told, and
+# not the last report alone; it writes down which models answered; and when
+# Fable was one of them the same file is kept a second time under the name
+# claude-usage-fable, so that the page can still find the last word on Fable
+# after later runs on other models. A probe asks the model given in `model`
+# (the page asks Fable) and the smallest one when none is given.
+#
+# WORKFLOW FILES ARE SET ASIDE. A runner may not push a change to a file under
+# .github/workflows/: GitHub refuses the WHOLE push of a branch that carries
+# one ("refusing to allow a GitHub App to create or update workflow ... without
+# `workflows` permission"), and that permission is not one a workflow can be
+# given. Until 2026-11-11 a run whose work touched a workflow file lost all of
+# its work at the last step (p335, twice). Such changes are now taken out of
+# the working tree before the commit and kept as workflow-changes.patch among
+# the run's own files (the artifact claude-run-<number>); the rest is pushed,
+# and the pull request says so in its title and first thing in its text. The
+# patch is applied from a PC, where a person's own credential may push it.
+#
 # This file is copied into the other repositories by /rnd (Set up), so it
 # must stay generic: nothing in it names this repository.
 
@@ -67,7 +89,7 @@ on:
         required: false
         default: ""
       model:
-        description: "The model (claude-opus-5-5, claude-sonnet-5-5, ...). Empty: the CLI's default."
+        description: "The model (claude-opus-5-5, claude-sonnet-5-5, ...). Empty: the CLI's default - and, in a probe, the smallest model."
         required: false
         default: ""
       probe:
@@ -163,6 +185,13 @@ jobs:
               print('nothing to work: no prompt matched', ids or 'open')
               open(os.environ['GITHUB_OUTPUT'], 'a').write('count=0\n')
               sys.exit(0)
+          # said to every run, whatever the shape of its ledger (2026-11-11)
+          WORKFLOW_FILES = (
+              'One kind of change cannot leave this runner: a file under .github/workflows/. GitHub refuses a '
+              'push that carries one, so the workflow takes such changes out before it commits and keeps them '
+              'as a patch with the files of the run, for a person to apply from a PC - the pull request will '
+              'not have them. If a prompt needs such a change, make it all the same, and say in the answer, in '
+              'plain words, that this one part is not applied yet and is waiting as the patch of this run.')
           if has_id:
               general = [
                   'Read CLAUDE.md in this directory, then work on the prompts picked below, in their order.',
@@ -190,6 +219,7 @@ jobs:
                   'files and by running the node and python checks that need nothing of the machine.',
                   'Do not commit, do not push and do not deploy; leave the work in the working tree - the workflow '
                   'commits it to a branch and opens a pull request.',
+                  WORKFLOW_FILES,
               ]
           elif is_log:
               general = [
@@ -212,6 +242,7 @@ jobs:
                   'scripts).',
                   'Do not commit and do not push; leave the work in the working tree - the workflow commits it '
                   'to a branch and opens a pull request.',
+                  WORKFLOW_FILES,
               ]
           else:
               general = [
@@ -231,6 +262,7 @@ jobs:
                   'machine (py_compile, small scripts).',
                   'Do not commit and do not push; leave the work in the working tree - the workflow commits it to '
                   'a branch and opens a pull request.',
+                  WORKFLOW_FILES,
               ]
           # the instruction file as THIS repository spells it: dcvista-wiki and
           # resolight-wiki keep it as claude.md, which is the same file on a PC
@@ -303,8 +335,10 @@ jobs:
                   print("--- result: turns=%s seconds=%.0f" % (e.get("num_turns"), (e.get("duration_ms") or 0) / 1000))
           '
 
-      # The probe: one word said to the smallest model, which is all it takes
-      # for Claude Code to be told where the limits stand. From an EMPTY folder
+      # The probe: one word said to a model - the one given in `model`, the
+      # smallest when none is - which is all it takes for Claude Code to be
+      # told where the limits stand. The page asks Fable: the week of Fable is
+      # told in the replies of Fable alone (p335). From an EMPTY folder
       # and not from the checkout - the instruction file of a repository is
       # read into every session started in it, and this one has nothing to do
       # with the repository.
@@ -321,8 +355,9 @@ jobs:
           [ -z "$ANTHROPIC_API_KEY" ] && unset ANTHROPIC_API_KEY
           [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] && unset CLAUDE_CODE_OAUTH_TOKEN
           mkdir -p "$RND_DIR" "$RUNNER_TEMP/probe" && cd "$RUNNER_TEMP/probe"
+          echo "the model asked: ${MODEL:-haiku}"
           echo "Reply with the one word: ok" \
-            | claude --print --verbose --output-format stream-json --model haiku \
+            | claude --print --verbose --output-format stream-json --model "${MODEL:-haiku}" \
             > "$RND_DIR/claude-run.log"
           grep -c '"rate_limit_event"' "$RND_DIR/claude-run.log" | sed 's/^/reports of the limits in the stream: /' || true
 
@@ -341,6 +376,9 @@ jobs:
           log = d / 'claude-run.log'
           info = result = None
           model = ''
+          windows, models, reports = {}, [], 0
+          def answered(m):
+              if isinstance(m, str) and m.startswith('claude') and m not in models: models.append(m)
           if log.is_file():
               for line in log.read_text(encoding='utf-8', errors='replace').splitlines():
                   try: e = json.loads(line)
@@ -349,11 +387,22 @@ jobs:
                   t = e.get('type')
                   if t == 'rate_limit_event' and isinstance(e.get('rate_limit_info'), dict):
                       info = e['rate_limit_info']
+                      reports += 1
+                      for name, w in (info.get('unifiedWindows') or {}).items():
+                          if isinstance(w, dict): windows[name] = w
+                  elif t == 'assistant':
+                      answered((e.get('message') or {}).get('model'))
                   elif t == 'result':
                       result = e
+                      for m in (e.get('modelUsage') or {}): answered(m)
                   elif t == 'system' and e.get('subtype') == 'init':
                       model = e.get('model') or ''
           if info is not None:
+              # the LAST report is the state of the plan, but the limits named in
+              # it are those of the model that last answered: a limit only one
+              # model has is in the reports of that model alone, so every limit
+              # any report of the run named is kept, each as it was last told
+              info = dict(info, unifiedWindows=windows) if windows else info
               u = (result or {}).get('usage') or {}
               spent = None
               if result:
@@ -370,17 +419,34 @@ jobs:
                   'run': int(os.environ.get('GITHUB_RUN_NUMBER') or 0),
                   'run_id': int(os.environ.get('GITHUB_RUN_ID') or 0),
                   'kind': 'probe' if os.environ.get('PROBE', '').strip() else 'prompts',
-                  'model': model, 'rate_limit': info, 'spent': spent,
+                  'model': model, 'models': models, 'reports': reports,
+                  'rate_limit': info, 'spent': spent,
               }, indent=1), encoding='utf-8')
+              print('%d report(s) of the limits; the models that answered: %s' % (reports, ', '.join(models) or '?'))
               print(json.dumps(info))
           else:
               print('Claude Code reported nothing of the limits in this run')
-          open(os.environ['GITHUB_OUTPUT'], 'a').write('have=%d\n' % (1 if info is not None else 0))
+          # the limit one model has, told by Fable: this is the last word on Fable
+          fable = info is not None and 'seven_day_overage_included' in windows and any(
+              'fable' in m.lower() for m in models + [model])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('have=%d\n' % (1 if info is not None else 0))
+              f.write('fable=%d\n' % (1 if fable else 0))
 
       - uses: actions/upload-artifact@v4
         if: always() && steps.usage.outputs.have == '1'
         with:
           name: claude-usage
+          path: ${{ runner.temp }}/rnd/usage.json
+          retention-days: 30
+
+      # the same file a second time when it carries the week of Fable, under a
+      # name of its own: the newest claude-usage is the newest report, and the
+      # newest claude-usage-fable is the newest that says anything of Fable
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.usage.outputs.fable == '1'
+        with:
+          name: claude-usage-fable
           path: ${{ runner.temp }}/rnd/usage.json
           retention-days: 30
 
@@ -415,19 +481,44 @@ jobs:
         run: |
           git config user.name "Claude (rnd)"
           git config user.email "noreply@anthropic.com"
+          # Workflow files first (see the head of this file): what the run changed
+          # under .github/workflows/ is written out as a patch and put back as it
+          # was, so that the push below carries none of it and is not refused.
+          WF=".github/workflows"
+          git add -A -- "$WF" 2>/dev/null || true
+          ASIDE="$(git diff --cached --name-only -- "$WF" | tr '\n' ' ' | sed 's/ *$//')"
+          TITLE="prompts ${IDS} (rnd run ${{ github.run_number }})"
+          if [ -n "$ASIDE" ]; then
+            git diff --cached --binary -- "$WF" > "$RND_DIR/workflow-changes.patch"
+            git reset -q -- "$WF"
+            git checkout -q -- "$WF" 2>/dev/null || true
+            git clean -fdq -- "$WF"
+            TITLE="$TITLE - workflow changes set aside"
+            {
+              echo "> **Not in this pull request: the changes to workflow files.** This run also changed \`${ASIDE}\`, and GitHub does not let a run push a change to a workflow file. Those changes were taken out and are kept as \`workflow-changes.patch\` in the artifact \`claude-run-${{ github.run_number }}\` of [this run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). They are applied from a PC: download the artifact, \`git apply workflow-changes.patch\`, commit and push - or ask Claude on the PC to apply the workflow patch of run ${{ github.run_number }} of this repository."
+              echo
+              cat "$RND_DIR/summary.md" 2>/dev/null || true
+            } > "$RND_DIR/summary.new" && mv "$RND_DIR/summary.new" "$RND_DIR/summary.md"
+            echo "::warning title=Workflow changes set aside::${ASIDE} - kept as workflow-changes.patch in the artifact claude-run-${{ github.run_number }}; a runner may not push a change to a workflow file"
+            printf '\n**Workflow changes set aside** (`%s`): kept as `workflow-changes.patch` in the artifact of this run - a runner may not push them.\n' "$ASIDE" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            if [ -n "$ASIDE" ]; then
+              echo "::error title=Only workflow files were changed::${ASIDE} - a runner may not push them, so there is no branch and no pull request; the changes are kept as workflow-changes.patch in the artifact claude-run-${{ github.run_number }}, to be applied from a PC"
+              exit 1
+            fi
             echo "nothing changed in the working tree; no branch and no pull request"
             exit 0
           fi
           BR="rnd/run-${{ github.run_number }}"
           git checkout -b "$BR"
           git add -A
-          git commit -m "prompts ${IDS} (rnd run ${{ github.run_number }})" \
+          git commit -m "$TITLE" \
                      -m "Worked on a GitHub Actions runner from fennecsig.com/rnd." \
                      -m "Co-Authored-By: Claude <noreply@anthropic.com>"
           git push -u origin "$BR"
           gh pr create --base "${{ github.ref_name }}" --head "$BR" \
-             --title "prompts ${IDS} (rnd run ${{ github.run_number }})" \
+             --title "$TITLE" \
              --body-file "$RND_DIR/summary.md"
 
       - uses: actions/upload-artifact@v4
@@ -438,4 +529,5 @@ jobs:
             ${{ runner.temp }}/rnd/prompt.md
             ${{ runner.temp }}/rnd/claude-run.log
             ${{ runner.temp }}/rnd/summary.md
+            ${{ runner.temp }}/rnd/workflow-changes.patch
           if-no-files-found: ignore
