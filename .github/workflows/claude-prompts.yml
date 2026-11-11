@@ -208,6 +208,12 @@ jobs:
                   'Do not commit and do not push; leave the work in the working tree - the workflow commits it to '
                   'a branch and opens a pull request.',
               ]
+          # the instruction file as THIS repository spells it: dcvista-wiki and
+          # resolight-wiki keep it as claude.md, which is the same file on a PC
+          # and a different name on a runner's disk - a run told to read
+          # CLAUDE.md there found none (2026-11-11)
+          spelt = next((n for n in sorted(os.listdir('.')) if n.lower() == 'claude.md'), 'CLAUDE.md')
+          general = [g.replace('CLAUDE.md', spelt) for g in general]
           lines = ['The prompts, %d of them:' % len(picked), '']
           for k, (rid, n, r) in enumerate(picked, 1):
               if has_id:
