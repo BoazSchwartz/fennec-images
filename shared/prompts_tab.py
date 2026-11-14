@@ -643,6 +643,13 @@ class PromptsTabMixin:
         self._txt_prompts_log.see(tk.END)
         self._txt_prompts_log.configure(state='disabled')
 
+    def _copy_prompts_log(self) -> None:
+        """The log pane's whole text onto the clipboard."""
+        text = self._txt_prompts_log.get('1.0', 'end-1c')
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._append_log(f'[PROMPTS] Copied the log ({len(text.splitlines())} lines) to the clipboard.\n')
+
     def _clear_prompts_log(self) -> None:
         self._txt_prompts_log.configure(state='normal')
         self._txt_prompts_log.delete('1.0', tk.END)
@@ -808,6 +815,8 @@ class PromptsTabMixin:
         self._pb_prompts.pack(side=tk.LEFT, padx=(10, 4))
         ttk.Button(hdr, text=_UI.PRM_BTN_CLEAR,
                    command=self._clear_prompts_log).pack(side=tk.RIGHT)
+        ttk.Button(hdr, text=_UI.PRM_BTN_COPY,
+                   command=self._copy_prompts_log).pack(side=tk.RIGHT, padx=(0, 6))
 
         self._txt_prompts_log = tk.Text(
             log_frame, wrap='word', state='disabled', height=6,

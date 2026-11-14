@@ -94,7 +94,7 @@ class AlbumsTabMixin:
         for r, (lbl, var) in enumerate(((_UI.LBL_SOURCE, self._var_alb_src),
                                         (_UI.LBL_ALBUM_DIR, self._var_alb_out))):
             ttk.Label(lf, text=lbl).grid(row=r, column=0, sticky='w', padx=(0, 6), pady=2)
-            ttk.Entry(lf, textvariable=var).grid(row=r, column=1, sticky='ew', pady=2)
+            cm.path_entry(lf, var).grid(row=r, column=1, sticky='ew', pady=2)
             ttk.Button(lf, text=_UI.BTN_BROWSE, command=lambda v=var, t=lbl: self._alb_browse(v, t)).grid(
                 row=r, column=2, padx=(4, 0), pady=2)
 
@@ -144,9 +144,15 @@ class AlbumsTabMixin:
             pass
 
     def _alb_out_dir(self, must_exist: bool = True) -> str:
-        out = self._var_alb_out.get().strip()
+        for var in (self._var_alb_src, self._var_alb_out):     # a pasted "C:\..." keeps its quotes
+            var.set(cm.clean_path(var.get()))
+        out = self._var_alb_out.get()
         if not out:
             messagebox.showinfo(_UI.TAB_ALBUMS.strip(), 'Choose the album folder first.', parent=self)
+            return ''
+        if not os.path.isabs(out):                 # would land under the app's working folder
+            messagebox.showinfo(_UI.TAB_ALBUMS.strip(), f'The album folder must be a full path:\n{out}',
+                                parent=self)
             return ''
         if must_exist and not os.path.isfile(os.path.join(out, 'album.json')):
             messagebox.showinfo(_UI.TAB_ALBUMS.strip(), f'No album.json in\n{out}\n\nBuild the album first.',
@@ -201,8 +207,8 @@ class AlbumsTabMixin:
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def _alb_build(self) -> None:
-        src = self._var_alb_src.get().strip()
         out = self._alb_out_dir(must_exist=False)
+        src = self._var_alb_src.get()
         if not out:
             return
         if not os.path.isdir(src):
@@ -294,7 +300,7 @@ class AlbumsTabMixin:
         self._append_log(f'[ALBUM] editor at http://127.0.0.1:{port}/ (runs while the app is open)\n')
 
     def _alb_open_folder(self) -> None:
-        out = self._var_alb_out.get().strip()
+        out = cm.clean_path(self._var_alb_out.get())
         if out and os.path.isdir(out):
             cm.open_path(out)
 

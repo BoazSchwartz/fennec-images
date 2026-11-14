@@ -6,5 +6,5 @@ onnxruntime>=1.17   # Classify: the local CLIP model (optional -- heuristics wit
 pymupdf>=1.24       # Classify: pdf text + preview
 python-docx>=1.1    # Classify: docx text
 openpyxl>=3.1       # Classify: xlsx text
-opencv-python-headless>=4.8   # Classify: face count when the CLIP model is off
+opencv-python-headless>=4.8   # Classify: people (YuNet + SFace onnx via cv2), face count without CLIP
 # Not pip: Tesseract OCR with the Hebrew pack (C:\Program Files\Tesseract-OCR, heb + eng)

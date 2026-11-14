@@ -1,15 +1,20 @@
-"""Classify the files of a folder -- photos by what happened (trip / party / everyday), images
-with text and documents by what they say (advertisement / school message / notification /
-document). Everything runs on this machine. No tkinter.
+"""Classify the files of a folder -- photos by what happened (trip / party) or where (home,
+restaurant, car, street, nature, work, else everyday), images with text and documents by what
+they say (advertisement / school message / notification / document); and the people in the
+photos (faces.py, optional). Everything runs on this machine. No tkinter.
 
 Images:
-  1. CLIP zero-shot (clip_model.py, optional) scores trip / party / other / text.
+  1. CLIP zero-shot (clip_model.py, optional) scores the photo groups (ClassifyClasses.GROUPS)
+     and text.
   2. Tesseract counts the words it is CONFIDENT about -- a photo yields a few noisy
      fragments, a flyer or a screenshot dozens of real words.
   3. Text image = many confident words, or CLIP says text and there are some words.
      Then the words decide the text class (ClassifyRules.KEYWORDS), CLIP breaking ties.
      Otherwise the best of trip / party / other.
-  Without CLIP: faces, sky and greenery (heuristic_photo) stand in for step 1.
+  Without CLIP: faces, sky and greenery (heuristic_photo) stand in for step 1 (trip / party /
+  other only).
+  4. With the face models: every face's embedding (Result.faces) and the names of the people
+     it matches (Result.people); the method gets METHOD_FACES.
 Documents (pdf, docx, html, txt, xlsx): their text, classified by the words.
 
 Results are cached per (path, size, mtime) in ImagesConfig.path_dir_local, so a re-run is
@@ -29,8 +34,10 @@ from fennec_images.config import (ClassifyClasses as _C, ClassifyFiles as _CF,
                                   ClassifyOcr as _OCR, ClassifyRules as _R, ClassifySheet as _SH,
                                   ClipModel as _CM, ImagesConfig as _IC)
 from fennec_images.src import extract_text as xt
+from fennec_images.src import faces as fc
 
 TEXT_MAX = _SH.TEXT_MAX         # the text kept (cache and folder sheet), not a snippet
+METHOD_FACES = _SH.METHOD_FACES
 
 
 @dataclass
@@ -46,6 +53,8 @@ class Result:
     text: str = ''
     manual: bool = False
     text_full: bool = False      # text is all the file's text (old cache entries kept 600 chars)
+    faces: list = field(default_factory=list)    # faces.FaceFinder.find, each with its 'name'
+    people: list = field(default_factory=list)   # the names matched, sorted
 
 
 def _cut(text: str) -> tuple[str, bool]:
@@ -61,14 +70,28 @@ def file_kind(path: str) -> str:
     return 'other'
 
 
-def list_files(path_dir: str) -> list[dict]:
-    """The folder's own files (not recursive), sorted by name."""
+def list_files(path_dir: str, recursive: bool = False) -> list[dict]:
+    """The folder's files, sorted by name; recursive: its subfolders' too, named by their
+    path under path_dir ('sub\a.jpg'), without the album folders (ALBUM_MARK), the output
+    folder and the class folders of Copy to Class Folders (these only at the top: a deeper
+    'Home' or 'Work' is the user's own)."""
     rows = []
-    for e in sorted(os.scandir(path_dir), key=lambda e: e.name.lower()):
-        if e.is_file():
-            st = e.stat()
-            rows.append({'path': e.path, 'name': e.name, 'size': st.st_size,
-                         'mtime': st.st_mtime, 'kind': file_kind(e.path)})
+    skip_top = {_SH.DIR_OUT.lower()} | {c.lower() for c in _C.ALL}
+    for dirpath, dirs, files in os.walk(path_dir):
+        skip = skip_top if dirpath == path_dir else {_SH.DIR_OUT.lower()}
+        dirs[:] = sorted(d for d in dirs if d.lower() not in skip
+                         and not os.path.isfile(os.path.join(dirpath, d, _CF.ALBUM_MARK)))
+        for name in files:
+            path = os.path.join(dirpath, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            rows.append({'path': path, 'name': os.path.relpath(path, path_dir), 'size': st.st_size,
+                         'mtime': st.st_mtime, 'kind': file_kind(path)})
+        if not recursive:
+            break
+    rows.sort(key=lambda r: r['name'].lower())
     return rows
 
 
@@ -148,11 +171,22 @@ def heuristic_photo(im) -> dict:
 # ── The classifier ───────────────────────────────────────────────────────────
 
 class Classifier:
-    def __init__(self, use_model: bool = True, use_ocr: bool = True, log=print):
+    def __init__(self, use_model: bool = True, use_ocr: bool = True, log=print,
+                 use_faces: bool = False, people: dict | None = None):
         self.log = log
         self.use_ocr = use_ocr and bool(xt.tesseract_exe())
         self.clip = None
+        self.faces = None
+        self.people = people if people is not None else {}     # shared with the tab, live
         self._lock = threading.Lock()
+        if use_faces:
+            if fc.model_ready():
+                try:
+                    self.faces = fc.FaceFinder()
+                except Exception as exc:
+                    log(f'[MODEL] could not load the face models, no people: {exc}\n')
+            else:
+                log('[MODEL] face models not downloaded, no people (Download Models to enable)\n')
         if use_model:
             from fennec_images.src import clip_model
             if clip_model.model_ready():
@@ -183,8 +217,29 @@ class Classifier:
         return Result(path, cls, conf, 'document', method, words, reason=why, text=text,
                       text_full=full)
 
+    def find_people(self, res: Result) -> Result:
+        """The face pass alone, for a result classified before the face models were here."""
+        if self.faces is not None and res.kind == 'image':
+            try:
+                self._faces(res, xt.open_image(res.path))
+            except Exception as exc:
+                res.reason += f'; faces: {type(exc).__name__}: {exc}'
+        return res
+
+    def _faces(self, res: Result, im) -> None:
+        res.faces = self.faces.find(im)
+        res.people = fc.name_faces(res.faces, self.people)
+        if METHOD_FACES not in res.method:
+            res.method += METHOD_FACES
+
     def _image(self, path: str) -> Result:
         im = xt.open_image(path)
+        res = self._image_class(path, im)
+        if self.faces is not None:
+            self._faces(res, im)
+        return res
+
+    def _image_class(self, path: str, im) -> Result:
         if self.clip is not None:
             with self._lock:                    # one onnx session, many OCR threads
                 emb = self.clip.embed_image(im)
@@ -212,8 +267,8 @@ class Classifier:
             return Result(path, cls, conf, 'image', method, words, scores,
                           f'text image ({words} words, text p={p_text:.2f}); {why}', text,
                           text_full=full)
-        photo = {'trip': _C.TRIP, 'party': _C.PARTY, 'other': _C.OTHER}
-        sub = {k: probs[k] for k in photo}
+        photo = _C.GROUPS
+        sub = {k: probs[k] for k in photo if k in probs}      # heuristics score three groups
         tot = sum(sub.values()) or 1.0
         best = max(sub, key=sub.get)
         why = ', '.join(f'{k} {v / tot:.2f}' for k, v in sub.items())
@@ -249,7 +304,7 @@ def file_time(path: str) -> float:
 
 
 def _photo_share(r: Result, key: str) -> float:
-    tot = sum(r.scores.get(k, 0.0) for k in ('trip', 'party', 'other')) or 1.0
+    tot = sum(r.scores.get(k, 0.0) for k in _C.GROUPS) or 1.0
     return r.scores.get(key, 0.0) / tot
 
 
@@ -281,7 +336,7 @@ def smooth_by_events(results: list) -> int:
         for r in ev:
             if r.cls == label:
                 continue
-            if r.conf < (_R.EVENT_OTHER_CONF if r.cls == _C.OTHER else _R.EVENT_OWN_CONF):
+            if r.conf < (_R.EVENT_OWN_CONF if r.cls in _C.EVENTS else _R.EVENT_OTHER_CONF):
                 r.reason += f'; event of {len(ev)} photos is a {label.lower()} (was {r.cls} {r.conf:.2f})'
                 r.cls = label
                 r.method += '+event'

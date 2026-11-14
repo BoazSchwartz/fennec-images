@@ -131,6 +131,12 @@ def tab_category(tab_text: str) -> str:
     name = ' '.join((tab_text or '').split())
     if not name:
         return ''
+    base = name[:-4] if name.lower().endswith(' tab') else name
+    for cat in PromptsLog.CATEGORIES:           # the tab a category names: 'Classify' is 'classify'
+        if cat.lower() in (name.lower(), base.lower()):
+            return cat
+    if getattr(PromptsLog, 'CATEGORY_DEFAULT', ''):
+        return PromptsLog.CATEGORY_DEFAULT
     if name.lower().endswith(' tab'):
         return name
     return PromptsLog.CATEGORY_TAB % name

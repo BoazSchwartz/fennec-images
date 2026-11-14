@@ -30,6 +30,8 @@ class ImagesState:
     KEY_USE_MODEL = 'classify_use_model'
     KEY_USE_OCR = 'classify_use_ocr'
     KEY_POLICY = 'classify_policy'
+    KEY_CLASSIFY_SUBDIRS = 'classify_subdirs'
+    KEY_FIND_PEOPLE = 'classify_find_people'
     KEY_ALBUM_SOURCE = 'albums_source'
     KEY_ALBUM_OUT = 'albums_out'
     KEY_ALBUM_COUNT = 'albums_count'
@@ -46,18 +48,30 @@ class SashConfig(_SharedSash):
 
 class ClassifyClasses:
     """The labels the Classify tab writes into its Class column. Photos split by WHAT
-    HAPPENED (trip / party / everyday), text-bearing images and documents by WHAT THEY SAY."""
+    HAPPENED (trip / party) or WHERE (home, restaurant, car, street, nature, work, else
+    everyday), text-bearing images and documents by what they say."""
     TRIP = 'Trip'
     PARTY = 'Party'
+    HOME = 'Home'
+    RESTAURANT = 'Restaurant'
+    CAR = 'Car'
+    STREET = 'Street'
+    NATURE = 'Nature'
+    WORK = 'Work'
     OTHER = 'Other photo'
     ADVERT = 'Advertisement'
     SCHOOL = 'School message'
     NOTICE = 'Notification'
     DOCUMENT = 'Document'
     UNKNOWN = 'Unreadable'
-    PHOTOS = [TRIP, PARTY, OTHER]
+    EVENTS = [TRIP, PARTY]              # the classes an event's photos share (event smoothing)
+    SCENES = [HOME, RESTAURANT, CAR, STREET, NATURE, WORK]
+    PHOTOS = EVENTS + SCENES + [OTHER]
     TEXTS = [ADVERT, SCHOOL, NOTICE, DOCUMENT]
     ALL = PHOTOS + TEXTS + [UNKNOWN]
+    # The photo classes by their score key (Result.scores, ClipModel.PROMPTS, the sheet)
+    GROUPS = {'trip': TRIP, 'party': PARTY, 'home': HOME, 'restaurant': RESTAURANT, 'car': CAR,
+              'street': STREET, 'nature': NATURE, 'work': WORK, 'other': OTHER}
 
 
 class ClassifyFiles:
@@ -72,6 +86,9 @@ class ClassifyFiles:
     PDF_MIN_TEXT = 40
     PDF_OCR_PAGES = 2
     PDF_OCR_DPI = 200
+    # Subfolders a recursive listing skips: an album folder (it holds this marker file) and
+    # the app's own output (ClassifySheet.DIR_OUT, the class folders of Copy to Class Folders)
+    ALBUM_MARK = 'album.json'
 
 
 class ClassifySheet:
@@ -91,14 +108,18 @@ class ClassifySheet:
     COL_MANUAL = 'Manual'
     COL_METHOD = 'Method'
     COL_WORDS = 'Words'
+    COL_FACES = 'Faces'
+    COL_PEOPLE = 'People'
     COL_REASON = 'Reason'
     COL_SCORES = 'Scores'
     COL_TEXT = 'Text'
     COLUMNS = [COL_NAME, COL_SIZE, COL_MODIFIED, COL_KIND, COL_CLASS, COL_CONF, COL_MANUAL,
-               COL_METHOD, COL_WORDS, COL_REASON, COL_SCORES, COL_TEXT]
+               COL_METHOD, COL_WORDS, COL_FACES, COL_PEOPLE, COL_REASON, COL_SCORES, COL_TEXT]
     WIDTHS = {COL_NAME: 40, COL_SIZE: 12, COL_MODIFIED: 17, COL_KIND: 10, COL_CLASS: 16,
-              COL_CONF: 7, COL_MANUAL: 8, COL_METHOD: 16, COL_WORDS: 7, COL_REASON: 50,
-              COL_SCORES: 30, COL_TEXT: 80}
+              COL_CONF: 7, COL_MANUAL: 8, COL_METHOD: 16, COL_WORDS: 7, COL_FACES: 7,
+              COL_PEOPLE: 24, COL_REASON: 50, COL_SCORES: 30, COL_TEXT: 80}
+    PEOPLE_SEP = ', '
+    METHOD_FACES = '+faces'     # in Method when the face pass ran (the sheet drops it: no embeddings)
 
 
 class ClassifyOcr:
@@ -139,7 +160,9 @@ class ClipModel:
     LOGIT_SCALE = 100.0
     CONTEXT = 77
     path_dir = ImagesConfig.path_dir_local / 'models' / NAME
-    # Several phrasings per group; a group scores the best of its prompts
+    # Several phrasings per group; a group scores the best of its prompts. The photo groups
+    # are ClassifyClasses.GROUPS (trip / party by the event, the rest by the place), 'text'
+    # the text-bearing images.
     PROMPTS = {
         'trip': ['a photo of a family trip in nature', 'a landscape photo taken on vacation',
                  'a photo of people hiking outdoors', 'a photo of a beach on a holiday',
@@ -149,9 +172,24 @@ class ClipModel:
                   'a photo of a wedding celebration', 'a photo of kids at a party with balloons',
                   'a photo of a birthday cake with candles', 'a photo of people dancing at an event',
                   'a photo of a festive holiday dinner with family'],
-        'other': ['a photo of a child at home', 'a selfie', 'a photo of food on a plate',
-                  'a casual everyday photo of a person', 'a photo of a pet',
-                  'a photo of a room in a house', 'a photo of an object'],
+        'home': ['a photo taken in a living room at home', 'a photo of a kitchen at home',
+                 'a photo of a child playing at home', 'a photo of a bedroom',
+                 'a photo of a family on a sofa at home', 'a photo of a backyard of a house'],
+        'restaurant': ['a photo of people eating at a restaurant', 'a photo of a table at a cafe',
+                       'a photo of a restaurant interior', 'a photo of a meal served at a restaurant'],
+        'car': ['a photo taken inside a car', 'a photo of a child in a car seat',
+                'a photo of a car on the road', 'a photo of a parking lot with cars'],
+        'street': ['a photo of a city street', 'a photo of a sidewalk with shops',
+                   'a photo of buildings in a city', 'a photo of people walking in the street',
+                   'a photo of a town square'],
+        'nature': ['a photo of trees and plants', 'a photo of flowers', 'a landscape photo of a field',
+                   'a photo of a forest', 'a photo of the sea', 'a photo of a river or a lake',
+                   'a photo of a wild animal'],
+        'work': ['a photo of an office', 'a photo of people in a meeting',
+                 'a photo of a desk with a computer', 'a photo of a conference presentation',
+                 'a photo of a workshop with tools', 'a photo of a construction site'],
+        'other': ['a selfie', 'a photo of food on a plate', 'a casual everyday photo of a person',
+                  'a photo of a pet', 'a photo of an object', 'a portrait of a child'],
         'text': ['a flyer with text', 'a poster advertisement', 'a screenshot of a phone',
                  'a screenshot of a chat message', 'a scanned document page', 'a printed letter',
                  'an announcement with hebrew text', 'a page of text', 'a table with text and numbers',
@@ -168,6 +206,32 @@ class ClipModel:
         ClassifyClasses.DOCUMENT: ['a scanned official document', 'a receipt', 'a form to fill out',
                                    'an invoice'],
     }
+
+
+class FaceModel:
+    """Finding people: OpenCV's YuNet face detector and SFace face recognizer, two small onnx
+    files of the opencv_zoo (0.2 + 37 MB) run by cv2 on the CPU, about 60 ms a photo. Faces
+    the user names in the Tag People window are kept, as embeddings, in
+    ImagesConfig.path_dir_local/people.json; every face found is matched against them."""
+    NAME = 'opencv-face'
+    URL_BASE = 'https://github.com/opencv/opencv_zoo/raw/main/models/'
+    FILE_DET = 'face_detection_yunet_2023mar.onnx'
+    FILE_REC = 'face_recognition_sface_2021dec.onnx'
+    FILES = {FILE_DET: 'face_detection_yunet/' + FILE_DET,
+             FILE_REC: 'face_recognition_sface/' + FILE_REC}
+    path_dir = ImagesConfig.path_dir_local / 'models' / NAME
+    FILE_PEOPLE = 'people.json'
+    MAX_SIDE = 1024         # the photo is reduced to this before detection
+    SCORE_MIN = 0.8         # YuNet's confidence that a box is a face
+    NMS = 0.3
+    TOP_K = 50
+    MIN_FACE = 20           # pixels, after the reduction; smaller faces embed badly
+    # Cosine similarity to a named face that makes it the same person (OpenCV's own figure for
+    # SFace is 0.363; different faces of the 2010 test folder stay under 0.35, same ones 0.65+)
+    MATCH_SIM = 0.40
+    EMB_DECIMALS = 4
+    CROP_PX = 110           # the face thumbnails of the Tag People window
+    CROP_MARGIN = 0.35      # of the box, added around it
 
 
 class ClassifyRules:
@@ -244,6 +308,10 @@ class UIStrings(CommonUIStrings):
     COL_SCORE = 'Conf.'
     COL_NAME = 'Name'
     COL_TEXT = 'Text'
+    COL_PEOPLE = 'People'
+    FMT_FACES = '{n} face(s)'           # the People cell: faces found, none of them named
+    FMT_FACES_MORE = ' +{n}'            # ... after the names, the faces not named
+    LBL_UNKNOWN_FACES = 'Unknown faces'
     TITLE_TEXT = 'Text read'
     LBL_TEXT_READING = 'Reading the full text…'
     LBL_TEXT_NONE = '(no text read)'
@@ -254,7 +322,19 @@ class UIStrings(CommonUIStrings):
     BTN_SET_CLASS = 'Set Class'
     BTN_COPY = 'Copy to Class Folders'
     BTN_OPEN = 'Open File'
-    BTN_DOWNLOAD_MODEL = 'Download Model'
+    BTN_DOWNLOAD_MODEL = 'Download Models'
+    BTN_TAG_PEOPLE = 'Tag People'
+    TITLE_TAG = 'Tag People'
+    LBL_TAG_HINT = 'Name each face (leave a stranger empty); the names are matched in every photo'
+    LBL_TAG_FINDING = 'Finding the faces…'
+    LBL_TAG_NONE = 'No face found in this image'
+    BTN_SAVE = 'Save'
+    STATUS_LOADING = 'loading the models…'
+    STATUS_PROGRESS = 'completed {done}/{total} files ({pct}%){extra}'
+    STATUS_FROM_CACHE = ', {n} from the cache'
+    STATUS_DONE = 'done: {done}/{total} files in {secs:.1f} s{extra}'
+    STATUS_STOPPED = 'stopped: {done}/{total} files in {secs:.1f} s{extra}'
+    STATUS_SMOOTHED = ', {n} moved to their event'
     LBL_POLICY = 'If exists'
     LBL_FILTER = 'Show'
     LBL_ALL_CLASSES = 'All classes'
@@ -262,9 +342,13 @@ class UIStrings(CommonUIStrings):
     LBL_MODEL_OFF = 'Model: not downloaded, heuristics only'
     LBL_OCR_ON = 'OCR: Tesseract (heb+eng)'
     LBL_OCR_OFF = 'OCR: Tesseract not found'
+    LBL_FACES_ON = 'Faces: YuNet + SFace (local) ready'
+    LBL_FACES_OFF = 'Faces: not downloaded'
     CHK_USE_MODEL = 'Use CLIP model'
     CHK_USE_OCR = 'Use OCR'
+    CHK_FIND_PEOPLE = 'Find people'
     CHK_RECLASSIFY = 'Ignore cache'
+    CHK_SUBDIRS = 'Subfolders'
 
     SEC_ALBUM_BUILD = 'Build'
     SEC_ALBUM_EVENTS = 'Events of the album'

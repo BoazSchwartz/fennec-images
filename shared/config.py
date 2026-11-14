@@ -179,14 +179,14 @@ class PromptsLog:
     COL_FILES = 'files'
     HEADERS = [COL_REQUESTED, COL_EXECUTED, COL_CATEGORY, COL_REQUEST, COL_NOTES,
                COL_WORK, COL_FILES]
-    # What the NEW REQUEST / Edit dialog offers: the log's SUBJECTS, each at most two
-    # words -- the cross-cutting ones first, then one entry per TAB ('%s Tab', the shape
-    # CATEGORY_TAB makes of a right-click's tab).
-    CATEGORIES = ['GUI', 'Classify', 'Albums', 'Data', 'Refactor',
-                  'Classify Tab', 'Albums Tab', 'Prompts Tab', 'General Tab']
-    # How a tab's name becomes a category: the shape every entry above already has.
-    # A request written by right-clicking a tab is filed under it (prompts_log.
-    # tab_category), so a tab with no entry of its own still files itself correctly.
+    # What the NEW REQUEST / Edit dialog offers: the log's SUBJECTS. Fennec Images files
+    # by the app itself and its two subjects, not by tab; a right-click on the Classify or
+    # Albums tab picks its own category (prompts_log.tab_category), any other tab 'app'.
+    CATEGORIES = ['app', 'classify', 'albums']
+    # A right-click's tab that names no category files under this one ('' = CATEGORY_TAB).
+    CATEGORY_DEFAULT = 'app'
+    # How a tab's name becomes a category when CATEGORY_DEFAULT is '' (the bookkeeping
+    # repo's way: one '%s Tab' category per tab).
     CATEGORY_TAB = '%s Tab'
     # The stamp written into both datetime columns
     DATETIME_FORMAT = '%d/%m/%Y %H:%M'
@@ -308,6 +308,7 @@ class CommonUIStrings:
     PRM_BTN_SAVE = 'Save'
     PRM_BTN_CANCEL = 'Cancel'
     PRM_BTN_CLEAR = 'Clear'
+    PRM_BTN_COPY = 'Copy'
     PRM_BTN_CLOSE = 'Close'
     PRM_BTN_SEND = 'Send'
     PRM_HDR_LOG = 'Claude Log'

@@ -47,9 +47,12 @@ _FILENAME_DATE_RES = [
 
 
 # ----------------------------------------------------------------- discovery
-def find_images(root: str) -> list[str]:
+def find_images(root: str, exclude: Iterable[str] = ()) -> list[str]:
+    """Images of root and all its subfolders, except the excluded dirs (the album being built)."""
+    skip = {os.path.normcase(os.path.abspath(d)) for d in exclude}
     paths: list[str] = []
-    for dirpath, _dirs, files in os.walk(root):
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if os.path.normcase(os.path.abspath(os.path.join(dirpath, d))) not in skip]
         for name in files:
             if os.path.splitext(name)[1].lower() in IMAGE_EXTS:
                 paths.append(os.path.join(dirpath, name))
@@ -319,7 +322,9 @@ def _scan_one(path: str, thumbs_dir: str, display_dir: str) -> tuple[Photo, list
 
 
 def scan_directory(root: str, cache_dir: str, workers: int = 4, progress=None) -> tuple[list[Photo], dict[str, list[float]]]:
-    paths = find_images(root)
+    paths = find_images(root, exclude=[os.path.dirname(os.path.abspath(cache_dir))])
+    n_dirs = len({os.path.dirname(p) for p in paths})
+    print(f"  {len(paths)} images in {n_dirs} folder(s)")
     thumbs_dir, display_dir = _ensure_dirs(cache_dir)
     photos: list[Photo] = []
     sigs: dict[str, list[float]] = {}

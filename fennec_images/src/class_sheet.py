@@ -36,7 +36,8 @@ def write_sheet(path_dir: str, rows: list) -> str:
                 r['kind']]
         if res:
             vals += [res.cls, res.conf, 'yes' if res.manual else '', res.method, res.words,
-                     res.reason, json.dumps(res.scores) if res.scores else '', res.text]
+                     len(res.faces), _SH.PEOPLE_SEP.join(res.people), res.reason,
+                     json.dumps(res.scores) if res.scores else '', res.text]
         ws.append([_clean(v) for v in vals])
         for c in ws[ws.max_row]:
             if isinstance(c.value, str) and c.value.startswith('='):
@@ -81,12 +82,15 @@ def read_sheet(path_dir: str) -> dict:
             except ValueError:
                 scores = {}
             text = str(d.get(_SH.COL_TEXT) or '')
+            people = [p for p in str(d.get(_SH.COL_PEOPLE) or '').split(_SH.PEOPLE_SEP) if p]
+            # The sheet has no face embeddings, so the face pass is marked not done (+faces)
             out[str(name)] = {'size': int(d.get(_SH.COL_SIZE) or -1), 'res': {
                 'path': os.path.join(path_dir, str(name)), 'cls': str(cls),
                 'conf': float(d.get(_SH.COL_CONF) or 0.0), 'kind': str(d.get(_SH.COL_KIND) or ''),
-                'method': str(d.get(_SH.COL_METHOD) or ''), 'words': int(d.get(_SH.COL_WORDS) or 0),
+                'method': str(d.get(_SH.COL_METHOD) or '').replace(_SH.METHOD_FACES, ''),
+                'words': int(d.get(_SH.COL_WORDS) or 0),
                 'scores': scores, 'reason': str(d.get(_SH.COL_REASON) or ''), 'text': text,
-                'manual': d.get(_SH.COL_MANUAL) == 'yes',
+                'manual': d.get(_SH.COL_MANUAL) == 'yes', 'people': people,
                 'text_full': bool(text.strip()) and len(text) < _SH.TEXT_MAX}}
     except (ValueError, TypeError):
         return out
