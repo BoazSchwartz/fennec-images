@@ -236,10 +236,8 @@ class ClaudeModels:
 
     LIST = [
         {'key': 'default', 'label': 'Default', 'model': ''},
-        {'key': 'fable', 'label': 'Fable 5.1', 'model': 'claude-fable-5-1'},
         {'key': 'opus', 'label': 'Opus 5.5', 'model': 'claude-opus-5-5'},
-        {'key': 'sonnet', 'label': 'Sonnet 5.5', 'model': 'claude-sonnet-5-5'},
-        {'key': 'haiku', 'label': 'Haiku 5.5', 'model': 'claude-haiku-5-5'},
+        {'key': 'fable', 'label': 'Fable 5.2', 'model': 'claude-fable-5-2'},
     ]
     DEFAULT_KEY = 'default'
 

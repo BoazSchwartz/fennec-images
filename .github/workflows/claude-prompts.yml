@@ -89,7 +89,7 @@ on:
         required: false
         default: ""
       model:
-        description: "The model (claude-opus-5-5, claude-sonnet-5-5, ...). Empty: the CLI's default - and, in a probe, the smallest model."
+        description: "The model (claude-opus-5-5 or claude-fable-5-2). Empty: the CLI's default - and, in a probe, the smallest model."
         required: false
         default: ""
       probe:
