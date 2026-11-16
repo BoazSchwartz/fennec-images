@@ -380,3 +380,20 @@ class OverridePolicy:
     BAK = 'Bak'
     ALL = [SKIP, OVERRIDE, BAK]
     DEFAULT = SKIP
+
+
+class DropboxLink:
+    """The Dropbox app's link to the photo catalog: three secrets in Google Secret Manager
+    (scripts/dropbox_connect.py writes them, the catalog job reads them) and no file anywhere.
+    The app is read-only by its scopes, so nothing here can change or delete a photo."""
+    SECRET_APP_KEY = 'dropbox-app-key'
+    SECRET_APP_SECRET = 'dropbox-app-secret'
+    SECRET_REFRESH_TOKEN = 'dropbox-refresh-token'
+    SECRETS = [SECRET_APP_KEY, SECRET_APP_SECRET, SECRET_REFRESH_TOKEN]
+    URL_AUTHORIZE = 'https://www.dropbox.com/oauth2/authorize'
+    URL_TOKEN = 'https://api.dropboxapi.com/oauth2/token'
+    URL_API = 'https://api.dropboxapi.com/2/'
+    SCOPES_NEEDED = ['files.metadata.read', 'files.content.read']
+    SCOPE_WRITE_MARK = '.write'       # any scope carrying it lets the app change files
+    GCLOUD = 'gcloud'
+    TIMEOUT_S = 60

@@ -20,9 +20,12 @@ REPO STRUCTURE
 fennec-images/
     CLAUDE.md  CLAUDE_GENERAL.md  README.md  requirements.txt  album.py
     docs/prompts.csv        the development log the Prompts tab works from
+    docs/dropbox_gcp_albums_plan_<date>.docx   the plan for the Dropbox photo bank (generated, see below)
     log/                    gitignored; claude_prompt.txt, launch_images.log
     assets/                 fennec-images.ico (scripts/make_icons.py draws it, light green F)
     scripts/                make_icons.py, make_shortcuts.vbs
+                            dropbox_connect.py (the Dropbox link into Secret Manager)
+                            make_dropbox_plan.py + dropbox_plan_text.py (the plan document)
     shared/                 copied from fennec-bookkeeping/shared -- keep in step with it
     fennec_album/           the album engine (CLI + browser editor); the GUI only added scan.find_images' exclude
     fennec_images/
@@ -170,10 +173,31 @@ thousands of thumbnails). Both folders are cleaned of pasted quotes and the albu
 be a full path: a quoted one used to resolve under the app's working folder and fail
 (WinError 123). The 2010 test folder (625 photos in 61 subfolders) builds in ~25 s.
 
+DROPBOX PHOTO BANK (PLAN, NOT BUILT YET)
+----------------------------------------
+docs/dropbox_gcp_albums_plan_<date>.docx is the plan: the photo bank stays in Dropbox, a GCP VM
+(built by a new fennec-it setup 'fennec-images (GCS VM)') reads every original once, analyses it
+with the Classify tab's own models and the album engine's metrics, and writes a catalog to a
+private bucket; a Library tab and an album build from the catalog follow. Its stages are written
+as prompts in the document, to be entered in the Prompts tabs when their turn comes.
+- The document is GENERATED: scripts/make_dropbox_plan.py lays out the blocks of
+  scripts/dropbox_plan_text.py (text, tables, the commands of the user's section; the names of
+  the cloud resources are constants at its top) and draws the architecture figure with PIL.
+  Change the text there and run it; a revision is a new dated file (--date) beside the old one.
+- scripts/dropbox_connect.py is the one built piece: the Dropbox consent (code flow, offline
+  access, no redirect address) and the app key, app secret and refresh token written to Google
+  Secret Manager through gcloud, the values on stdin, never on a command line or a disk
+  (config.DropboxLink names the three secrets). --check reads them back and asks Dropbox for
+  the account, the space used and the top folders. Standard library only.
+- Rules the plan sets and later work must keep: the Dropbox app has reading scopes only
+  (files.metadata.read, files.content.read), so nothing can change a photo; no key file
+  anywhere (the VM reads the secrets as its service account, the PC through the gcloud
+  sign-in, as fennec-it does); an original is analysed in memory and never stored.
+
 CONFIG MODULE
 -------------
 fennec_images/config.py: ImagesConfig (identity, local dir), ImagesState (state.json keys),
 SashConfig (adds the tabs' sash keys), ClassifyClasses, ClassifyFiles, ClassifySheet,
 ClassifyOcr, ClipModel, FaceModel,
-ClassifyRules, UIStrings(CommonUIStrings), OverridePolicy; plus the shared classes re-exported.
+ClassifyRules, UIStrings(CommonUIStrings), OverridePolicy, DropboxLink; plus the shared classes re-exported.
 Thresholds and keyword lists live there, never inline.
