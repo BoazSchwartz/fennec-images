@@ -71,8 +71,21 @@
 # and the pull request says so in its title and first thing in its text. The
 # patch is applied from a PC, where a person's own credential may push it.
 #
-# This file is copied into the other repositories by /rnd (Set up), so it
-# must stay generic: nothing in it names this repository.
+# THE REPOSITORY'S OWN CHECKS (the repository split, 2026-11-20). A pull
+# request a run opens starts no other workflow - GitHub triggers nothing on
+# the events of a workflow's own token - so the checks a deploy would run
+# first are run here, after the work and before the commit: `npm run check`
+# of the package.json in DEPLOY_DIR (the repository variable deploy.yml reads
+# too; the root when it is not set), when there is one. They run on a copy of
+# the working tree, so nothing an install or a check writes reaches the
+# commit; a failed check stops nothing, and the pull request says how it went
+# in its text (and, when it failed, in its title). A repository with no such
+# script is told nothing of it and nothing is run.
+#
+# The home of this file is the first repository of RND_REPOS (fennec-rnd since
+# the switch, step 4 of the repository split); /rnd (Set up) and
+# `rnd-setup --workflow` copy it from there into the others, so it must stay
+# generic: nothing in it names a repository.
 
 name: Claude prompts
 run-name: "${{ inputs.probe == 'usage' && 'Claude usage asked' || format('prompts {0}', inputs.prompts || 'open') }} (rnd)"
@@ -142,6 +155,8 @@ jobs:
       - name: Compose the prompt from the ledger
         id: compose
         shell: python
+        env:
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '.' }}
         run: |
           import csv, io, os, sys, datetime, zoneinfo, pathlib
           out = pathlib.Path(os.environ['RND_DIR']); out.mkdir(parents=True, exist_ok=True)
@@ -192,14 +207,26 @@ jobs:
               'as a patch with the files of the run, for a person to apply from a PC - the pull request will '
               'not have them. If a prompt needs such a change, make it all the same, and say in the answer, in '
               'plain words, that this one part is not applied yet and is waiting as the patch of this run.')
+          # said only where there is a check to run (see THE REPOSITORY'S OWN CHECKS above)
+          deploy_dir = os.environ.get('DEPLOY_DIR', '').strip() or '.'
+          pkg = pathlib.Path(deploy_dir) / 'package.json'
+          try:
+              import json
+              has_check = bool((json.loads(pkg.read_text(encoding='utf-8')).get('scripts') or {}).get('check'))
+          except Exception:
+              has_check = False
+          CHECK_AFTER = (
+              'After you, the workflow runs `npm run check` (the package.json %s) on what you leave, and writes '
+              'how it went into the pull request: leave the work so that it passes.' % (
+                  'at the root' if deploy_dir == '.' else 'in %s/' % deploy_dir))
           if has_id:
               general = [
                   'Read CLAUDE.md in this directory, then work on the prompts picked below, in their order.',
-                  'A prompt names the page it was raised on, as it is served: index.html is the public site '
-                  '(src/index.html on disk), recipes/... is a recipe page, wiki/... is a page of this wiki - every '
-                  'one of them under src/. A prompt with no page was typed. The work is done in the repository - '
-                  "the site's file, the recipe tooling or spreadsheet, the wiki page, the code - never on a served "
-                  'copy, and a recipe is never hand-edited under src/recipes/.',
+                  'A prompt may name the page it was raised on, as fennecsig.com serves it; CLAUDE.md says which '
+                  'pages this repository serves and which files on disk each is made from. A prompt with no page '
+                  'was typed. The work is done in the repository - the source of the page, its tooling or data, '
+                  'the code - never on a served or generated copy; CLAUDE.md says which files are generated and '
+                  'how they are made again.',
                   'For each prompt: do the work; then answer it on its own row of docs/prompts.csv - the one store, '
                   'a row a prompt - by filling in work (see the next paragraph for how it is written), files (every '
                   'file touched, repository-relative), category, status "done" (or "dropped", the work saying why) '
@@ -268,6 +295,8 @@ jobs:
           # resolight-wiki keep it as claude.md, which is the same file on a PC
           # and a different name on a runner's disk - a run told to read
           # CLAUDE.md there found none (2026-11-11)
+          if has_check:
+              general.append(CHECK_AFTER)
           spelt = next((n for n in sorted(os.listdir('.')) if n.lower() == 'claude.md'), 'CLAUDE.md')
           general = [g.replace('CLAUDE.md', spelt) for g in general]
           lines = ['The prompts, %d of them:' % len(picked), '']
@@ -473,11 +502,72 @@ jobs:
           IDS: ${{ steps.compose.outputs.ids }}
           STAMP_OUT: ${{ steps.compose.outputs.stamp }}
 
+      # The repository's own checks (see the head of this file), on a COPY of
+      # the working tree, and how they went added to the text of the pull
+      # request. The step never fails the run; `outcome` is passed, failed or
+      # none (no check to run).
+      - name: The repository's own checks
+        id: check
+        if: steps.compose.outputs.count != '0'
+        continue-on-error: true
+        env:
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR || '.' }}
+          NO_COLOR: "1"
+          WRANGLER_SEND_METRICS: "false"
+          RUN_NO: ${{ github.run_number }}
+        run: |
+          set +e
+          PKG="$DEPLOY_DIR/package.json"
+          if [ ! -f "$PKG" ] || ! node -e 'const p = require(process.argv[1]); process.exit(p.scripts && p.scripts.check ? 0 : 1)' "$PWD/$PKG"; then
+            echo "no npm check in $DEPLOY_DIR: nothing to run"
+            echo "outcome=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          WHERE="$DEPLOY_DIR/"; [ "$DEPLOY_DIR" = "." ] && WHERE="the root"
+          COPY="$RUNNER_TEMP/check-copy"
+          rm -rf "$COPY" && cp -a . "$COPY"
+          START=$(date +%s)
+          ( cd "$COPY/$DEPLOY_DIR" && timeout 1200 bash -c '
+              if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi \
+                && npm run check' ) > "$RND_DIR/check.log" 2>&1
+          RC=$?
+          SECS=$(( $(date +%s) - START ))
+          if [ "$RC" -eq 0 ]; then OUT=passed; else OUT=failed; fi
+          WHY=""; [ "$RC" -eq 124 ] && WHY=", stopped after 20 minutes"
+          echo "outcome=$OUT" >> "$GITHUB_OUTPUT"
+          {
+            echo
+            echo "### The repository's own checks"
+            echo
+            if [ "$OUT" = passed ]; then
+              echo "\`npm run check\` (the package.json in ${WHERE}), on the work of this run: **passed** in ${SECS} s."
+            else
+              echo "\`npm run check\` (the package.json in ${WHERE}), on the work of this run: **FAILED** (exit ${RC}${WHY}, ${SECS} s). Better not merged as it is: a new prompt can fix it. The whole output is \`check.log\` in the artifact \`claude-run-${RUN_NO}\`; its last lines:"
+              echo
+              echo '<details><summary>the last 60 lines of the output</summary>'
+              echo
+              echo '~~~text'
+              tail -n 60 "$RND_DIR/check.log" | cut -c1-300 | sed 's/~~~/~ ~ ~/g'
+              echo '~~~'
+              echo
+              echo '</details>'
+            fi
+          } > "$RND_DIR/check.md"
+          cat "$RND_DIR/check.md" >> "$RND_DIR/summary.md"
+          cat "$RND_DIR/check.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "npm run check in $WHERE: $OUT (exit $RC, $SECS s)"
+          if [ "$OUT" != passed ]; then
+            echo "::warning title=npm run check failed::exit ${RC} in ${WHERE} - the pull request says so; check.log is in the artifact claude-run-${RUN_NO}"
+            tail -n 40 "$RND_DIR/check.log"
+          fi
+          exit 0
+
       - name: Commit to a branch and open a pull request
         if: steps.compose.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           IDS: ${{ steps.compose.outputs.ids }}
+          CHECK: ${{ steps.check.outputs.outcome }}
         run: |
           git config user.name "Claude (rnd)"
           git config user.email "noreply@anthropic.com"
@@ -488,6 +578,7 @@ jobs:
           git add -A -- "$WF" 2>/dev/null || true
           ASIDE="$(git diff --cached --name-only -- "$WF" | tr '\n' ' ' | sed 's/ *$//')"
           TITLE="prompts ${IDS} (rnd run ${{ github.run_number }})"
+          if [ "$CHECK" = "failed" ]; then TITLE="$TITLE - check failed"; fi
           if [ -n "$ASIDE" ]; then
             git diff --cached --binary -- "$WF" > "$RND_DIR/workflow-changes.patch"
             git reset -q -- "$WF"
@@ -530,4 +621,5 @@ jobs:
             ${{ runner.temp }}/rnd/claude-run.log
             ${{ runner.temp }}/rnd/summary.md
             ${{ runner.temp }}/rnd/workflow-changes.patch
+            ${{ runner.temp }}/rnd/check.log
           if-no-files-found: ignore
